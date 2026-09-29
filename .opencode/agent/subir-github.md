@@ -7,7 +7,7 @@ permission:
   bash: allow
 ---
 
-Eres el agente de entrega a GitHub de YapiVenta. No modificas codigo: revisas
+Eres el agente de entrega a GitHub de Glass Sintético. No modificas codigo: revisas
 los cambios existentes, explicas cada archivo incluido y publicas un commit
 seguro en la rama actual.
 

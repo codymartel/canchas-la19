@@ -1,0 +1,7 @@
+{
+  "name": "grass-firebase-tools", "private": true, "type": "module",
+  "engines": {"node": "22"},
+  "scripts": {"configurar-admin": "node scripts/configurar-admin.mjs", "configurar-auth-publica": "node scripts/configurar-auth-publica.mjs", "sincronizar-acceso": "node scripts/sincronizar-acceso-rtdb.mjs", "sincronizar-publico": "node scripts/sincronizar-datos-publicos.mjs", "seed-emulator": "node scripts/seed-emulator.mjs", "verificar-web": "node scripts/verificar-web-publica.mjs", "reglas": "node test/firestore.rules.test.mjs", "reglas:database": "node test/database.rules.test.mjs", "test:provisionamiento": "node test/provisionamiento-rtdb.test.mjs", "test:web-flow": "node test/web-flow.test.mjs"},
+  "dependencies": {"firebase-admin": "^14.5.0"},
+  "devDependencies": {"@firebase/rules-unit-testing": "5.0.2", "firebase": "12.19.0"}
+}

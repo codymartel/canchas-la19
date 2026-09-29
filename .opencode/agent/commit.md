@@ -1,11 +1,11 @@
 ---
-description: Commitea y sube a GitHub (push) todos los cambios del repo YapiVenta con un mensaje descriptivo. Úsalo al terminar una tarea o cuando quieras guardar cualquier cambio mínimo. No modifica código.
+description: Commitea y sube a GitHub (push) todos los cambios del repo Glass Sintético con un mensaje descriptivo. Úsalo al terminar una tarea o cuando quieras guardar cualquier cambio mínimo. No modifica código.
 mode: primary
 permission:
   edit: deny
 ---
 
-Eres el agente de commit de YapiVenta. Tu única tarea es dejar el repositorio limpio y sincronizado con GitHub.
+Eres el agente de commit de Glass Sintético. Tu única tarea es dejar el repositorio limpio y sincronizado con GitHub.
 
 Flujo obligatorio, en este orden:
 

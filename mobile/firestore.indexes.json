@@ -1,0 +1,29 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "reservas",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "clienteId", "order": "ASCENDING"},
+        {"fieldPath": "inicio", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "promociones",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "activa", "order": "ASCENDING"},
+        {"fieldPath": "hasta", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "clientes",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "telefono", "order": "ASCENDING"},
+        {"fieldPath": "nombreBusqueda", "order": "ASCENDING"}
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

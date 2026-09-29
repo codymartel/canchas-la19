@@ -1,219 +1,699 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // ─────────────────────────────────────────────────────────────────────
-    // Helpers compartidos
-    // ─────────────────────────────────────────────────────────────────────
-    function isSignedIn() {
-      return request.auth != null && request.auth.uid != null;
+    function autenticado() {
+      return request.auth != null;
     }
 
-    // El usuario autenticado es dueño del negocio indicado por su id.
-    function esDuenoNegocio(negocioId) {
-      return isSignedIn() &&
-        get(/databases/$(database)/documents/negocios/$(negocioId)).data.propietarioUid == request.auth.uid;
+    function verificado() {
+      return autenticado() && request.auth.token.email_verified == true;
     }
 
-    function esDuenoNegocioDespues(negocioId) {
-      return isSignedIn() && negocioId is string &&
-        getAfter(/databases/$(database)/documents/negocios/$(negocioId)).data.propietarioUid == request.auth.uid;
+    function anonimo() {
+      return autenticado()
+        && request.auth.token.firebase.sign_in_provider == 'anonymous';
     }
 
-    function esNegocioNuevoDelUsuarioDespues(negocioId) {
-      return negocioId is string &&
-        !exists(/databases/$(database)/documents/negocios/$(negocioId)) &&
-        esDuenoNegocioDespues(negocioId);
+    function identidadPersonal() {
+      return autenticado()
+        && request.auth.token.firebase.sign_in_provider != 'anonymous';
     }
 
-    // Valida que la data de un doc público corresponda a un negocio que
-    // el usuario autenticado efectivamente posee. Los docs de
-    // negocios_publicos no llevan propietarioUid, así que se resuelve
-    // contra el negocio referenciado por data.negocioId.
-    function esDuenoNegocioPublico(datos) {
-      return datos.negocioId is string && esDuenoNegocio(datos.negocioId);
+    function rutaConfiguracion() {
+      return /databases/$(database)/documents/sistema/grass;
     }
 
-    function esDuenoNegocioPublicoDespues(datos) {
-      return datos.negocioId is string &&
-        esDuenoNegocioDespues(datos.negocioId);
+    function existeConfiguracion() {
+      return exists(rutaConfiguracion());
     }
 
-    function camposPerfilPermitidos(datos) {
-      return datos.keys().hasOnly([
-        'email',
-        'terminosAceptados',
-        'createdAt',
-        'negocioId'
-      ]);
+    function esAdministrador() {
+      return verificado() && existeConfiguracion()
+        && get(rutaConfiguracion()).data.administradorUid == request.auth.uid;
     }
 
-    function createdAtValidoEnCreacion(datos) {
-      return !datos.keys().hasAny(['createdAt']) || datos.createdAt is timestamp;
+    function negocioCoincide(n) {
+      return existeConfiguracion()
+        && get(rutaConfiguracion()).data.negocioId == n;
     }
 
-    function negocioIdValidoEnActualizacion() {
-      let teniaNegocioId = resource.data.keys().hasAny(['negocioId']);
-      let tieneNegocioId = request.resource.data.keys().hasAny(['negocioId']);
-      return teniaNegocioId
-        ? tieneNegocioId &&
-          request.resource.data.negocioId == resource.data.negocioId
-        : !tieneNegocioId ||
-          esNegocioNuevoDelUsuarioDespues(request.resource.data.negocioId);
+    function esAdministradorDe(n) {
+      return esAdministrador() && negocioCoincide(n);
     }
 
-    function cambioWebPrivadoSincronizado(negocioId, datosAntes, datosDespues) {
-      let publicoAntes = get(
-        /databases/$(database)/documents/negocios_publicos/$(datosDespues.slug)
-      );
-      let publicoDespues = getAfter(
-        /databases/$(database)/documents/negocios_publicos/$(datosDespues.slug)
-      );
-      return datosDespues.slug is string &&
-        datosDespues.slug == datosAntes.slug &&
-        datosDespues.slug.matches('^[a-z0-9]+(-[a-z0-9]+)*$') &&
-        publicoAntes.data.negocioId == negocioId &&
-        publicoAntes.data.webActiva is bool &&
-        publicoAntes.data.webActiva == datosAntes.webActiva &&
-        publicoDespues.data.negocioId == negocioId &&
-        publicoDespues.data.webActiva is bool &&
-        publicoDespues.data.webActiva == datosDespues.webActiva;
+    // Fundacion del negocio por el propio administrador, en la misma transaccion
+    // que las canchas. Solo aplica cuando el documento NO existe todavia, asi que
+    // un negocio ya fundado no puede ser reclamado ni ampliado por otro.
+    function reclamoValido() {
+      return identidadPersonal()
+        && verificado()
+        && !exists(rutaConfiguracion())
+        && existsAfter(rutaConfiguracion())
+        && getAfter(rutaConfiguracion()).data.administradorUid == request.auth.uid
+        && getAfter(rutaConfiguracion()).data.negocioId is string
+        && getAfter(rutaConfiguracion()).data.negocioId.size() >= 3
+        && getAfter(rutaConfiguracion()).data.negocioId.size() <= 64
+        && getAfter(rutaConfiguracion()).data.keys().hasOnly(
+          ['administradorUid', 'negocioId', 'zonaHoraria', 'creadoEn'])
+        && (!('zonaHoraria' in getAfter(rutaConfiguracion()).data)
+          || getAfter(rutaConfiguracion()).data.zonaHoraria == 'America/Lima');
     }
 
-    function proyeccionWebActivaValida(slug, datos) {
-      let negocio = getAfter(
-        /databases/$(database)/documents/negocios/$(datos.negocioId)
-      );
-      return datos.webActiva is bool &&
-        negocio.data.slug == slug &&
-        negocio.data.webActiva is bool &&
-        datos.webActiva == negocio.data.webActiva;
+    function negocioCoincideReferencia(n) {
+      return (existsAfter(rutaConfiguracion())
+          && getAfter(rutaConfiguracion()).data.negocioId == n)
+        || (existeConfiguracion()
+          && get(rutaConfiguracion()).data.negocioId == n);
     }
 
-    function cambioWebPublicoSincronizado(datosAntes, datosDespues) {
-      let negocioAntes = get(
-        /databases/$(database)/documents/negocios/$(datosAntes.negocioId)
-      );
-      let negocioDespues = getAfter(
-        /databases/$(database)/documents/negocios/$(datosDespues.negocioId)
-      );
-      return !datosDespues.diff(datosAntes).affectedKeys().hasAny(['webActiva']) ||
-        (negocioAntes.data.webActiva is bool &&
-          negocioAntes.data.webActiva == datosAntes.webActiva &&
-          negocioDespues.data.webActiva is bool &&
-          negocioDespues.data.webActiva == datosDespues.webActiva);
+    function existeEmpleado(n) {
+      let ruta = /databases/$(database)/documents/negocios/$(n)/empleados/$(request.auth.uid);
+      return autenticado() && exists(ruta);
     }
 
-    // ─────────────────────────────────────────────────────────────────────
-    // users/{userId}
-    //   Solo conserva identidad, términos y el vínculo inmutable al negocio.
-    //   Los campos legacy existentes pueden permanecer, pero no cambiar.
-    // ─────────────────────────────────────────────────────────────────────
-    match /users/{userId} {
-      allow read: if isSignedIn() && request.auth.uid == userId;
-      allow create: if isSignedIn() && request.auth.uid == userId &&
-        camposPerfilPermitidos(request.resource.data) &&
-        createdAtValidoEnCreacion(request.resource.data) &&
-        (!request.resource.data.keys().hasAny(['negocioId']) ||
-          esNegocioNuevoDelUsuarioDespues(request.resource.data.negocioId));
-      allow update: if isSignedIn() && request.auth.uid == userId &&
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'email',
-          'terminosAceptados',
-          'negocioId'
-        ]) &&
-        negocioIdValidoEnActualizacion();
+    function esEmpleadoActivo(n) {
+      let ruta = /databases/$(database)/documents/negocios/$(n)/empleados/$(request.auth.uid);
+      return existeEmpleado(n)
+        && negocioCoincide(n)
+        && get(ruta).data.activo == true
+        && get(ruta).data.rol == 'empleado_control';
+    }
+
+    function puede(n, permiso) {
+      let ruta = /databases/$(database)/documents/negocios/$(n)/empleados/$(request.auth.uid);
+      return esAdministradorDe(n)
+        || (esEmpleadoActivo(n)
+          && get(ruta).data.permisos != null
+          && get(ruta).data.permisos[permiso] == true);
+    }
+
+    function limite(n) {
+      return request.query.limit != null && request.query.limit <= n;
+    }
+
+    function sedeValida(s) {
+      return s is string && s in ['la-19', 'la-23', 'la-24'];
+    }
+
+    function duracionValida(d) {
+      return d is int && d >= 30 && d <= 240 && d % 30 == 0;
+    }
+
+    // El sello de tiempo de abajo fija la fecha real, asi que aqui basta con
+    // acotar los rangos en vez de usar expresiones regulares, que son caras
+    // cuando se evaluan una vez por cada franja de la reserva.
+    function slotBaseValido(s, r, i) {
+      return s is map
+        && s.keys().hasOnly(['dia', 'year', 'month', 'day', 'minute', 'inicio'])
+        && s.dia is string && s.dia.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && s.year is string && int(s.year) >= 2000 && int(s.year) <= 2100
+        && s.month is string && int(s.month) >= 1 && int(s.month) <= 12
+        && s.day is string && int(s.day) >= 1 && int(s.day) <= 31
+        && s.minute is string
+        && int(s.minute) >= 0 && int(s.minute) < 1440 && int(s.minute) % 30 == 0
+        && s.inicio is timestamp
+        && s.inicio == r.inicio + duration.value(i * 30, 'm')
+        && s.inicio == timestamp.date(int(s.year), int(s.month), int(s.day))
+          + duration.value(int(s.minute) + 300, 'm');
+    }
+
+    function slotCreado(n, id, coleccion, r, i) {
+      let s = r.slots[i];
+      let ruta = /databases/$(database)/documents/negocios/$(n)/agenda/$(r.canchaId)/anios/$(s.year)/meses/$(s.month)/dias/$(s.day)/franjas/$(s.minute);
+      let o = getAfter(ruta).data;
+      return existsAfter(ruta)
+        && o.reservaId == id
+        && o.coleccion == coleccion;
+    }
+
+    function slotsCreados(n, id, coleccion, r) {
+      return r.slots is list
+        && r.slots.size() == r.duracion / 30
+        && r.slots.size() >= 1 && r.slots.size() <= 8
+        && slotCreado(n, id, coleccion, r, 0)
+        && (r.slots.size() < 2 || slotCreado(n, id, coleccion, r, 1))
+        && (r.slots.size() < 3 || slotCreado(n, id, coleccion, r, 2))
+        && (r.slots.size() < 4 || slotCreado(n, id, coleccion, r, 3))
+        && (r.slots.size() < 5 || slotCreado(n, id, coleccion, r, 4))
+        && (r.slots.size() < 6 || slotCreado(n, id, coleccion, r, 5))
+        && (r.slots.size() < 7 || slotCreado(n, id, coleccion, r, 6))
+        && (r.slots.size() < 8 || slotCreado(n, id, coleccion, r, 7));
+    }
+
+    function diasValidos(r) {
+      let ultimo = r.slots[r.slots.size() - 1];
+      // El campo dia de cada slot ya se valido contra su year/month/day, asi que
+      // comparar dias no necesita maths de timestamps ni zona horaria.
+      let mismoDia = ultimo.dia == r.slots[0].dia;
+      return r.dias[0] == r.slots[0].dia
+        && (r.dias.size() == 1 && mismoDia
+          || r.dias.size() == 2 && !mismoDia && r.dias[1] == ultimo.dia);
+    }
+
+    function slotsPresentes(n, r) {
+      return existsAfter(/databases/$(database)/documents/negocios/$(n)/agenda/$(r.canchaId)/anios/$(r.slots[0].year)/meses/$(r.slots[0].month)/dias/$(r.slots[0].day)/franjas/$(r.slots[0].minute))
+        && (r.slots.size() < 2 || existsAfter(/databases/$(database)/documents/negocios/$(n)/agenda/$(r.canchaId)/anios/$(r.slots[1].year)/meses/$(r.slots[1].month)/dias/$(r.slots[1].day)/franjas/$(r.slots[1].minute)))
+        && (r.slots.size() < 3 || existsAfter(/databases/$(database)/documents/negocios/$(n)/agenda/$(r.canchaId)/anios/$(r.slots[2].year)/meses/$(r.slots[2].month)/dias/$(r.slots[2].day)/franjas/$(r.slots[2].minute)))
+        && (r.slots.size() < 4 || existsAfter(/databases/$(database)/documents/negocios/$(n)/agenda/$(r.canchaId)/anios/$(r.slots[3].year)/meses/$(r.slots[3].month)/dias/$(r.slots[3].day)/franjas/$(r.slots[3].minute)))
+        && (r.slots.size() < 5 || existsAfter(/databases/$(database)/documents/negocios/$(n)/agenda/$(r.canchaId)/anios/$(r.slots[4].year)/meses/$(r.slots[4].month)/dias/$(r.slots[4].day)/franjas/$(r.slots[4].minute)))
+        && (r.slots.size() < 6 || existsAfter(/databases/$(database)/documents/negocios/$(n)/agenda/$(r.canchaId)/anios/$(r.slots[5].year)/meses/$(r.slots[5].month)/dias/$(r.slots[5].day)/franjas/$(r.slots[5].minute)))
+        && (r.slots.size() < 7 || existsAfter(/databases/$(database)/documents/negocios/$(n)/agenda/$(r.canchaId)/anios/$(r.slots[6].year)/meses/$(r.slots[6].month)/dias/$(r.slots[6].day)/franjas/$(r.slots[6].minute)))
+        && (r.slots.size() < 8 || existsAfter(/databases/$(database)/documents/negocios/$(n)/agenda/$(r.canchaId)/anios/$(r.slots[7].year)/meses/$(r.slots[7].month)/dias/$(r.slots[7].day)/franjas/$(r.slots[7].minute)));
+    }
+
+    function slotAusente(n, r, i) {
+      let s = r.slots[i];
+      return !existsAfter(/databases/$(database)/documents/negocios/$(n)/agenda/$(r.canchaId)/anios/$(s.year)/meses/$(s.month)/dias/$(s.day)/franjas/$(s.minute));
+    }
+
+    function slotsLiberados(n, r) {
+      return slotAusente(n, r, 0)
+        && (r.slots.size() < 2 || slotAusente(n, r, 1))
+        && (r.slots.size() < 3 || slotAusente(n, r, 2))
+        && (r.slots.size() < 4 || slotAusente(n, r, 3))
+        && (r.slots.size() < 5 || slotAusente(n, r, 4))
+        && (r.slots.size() < 6 || slotAusente(n, r, 5))
+        && (r.slots.size() < 7 || slotAusente(n, r, 6))
+        && (r.slots.size() < 8 || slotAusente(n, r, 7));
+    }
+
+    // Horario de atencion y duracion base del turno: una sola configuracion
+    // del negocio, identica para La 19, La 23 y La 24. Vive en el documento
+    // privado del negocio y se proyecta a negocios_publicos.
+    function horarioValido(d) {
+      return d.aperturaMinuto is int
+        && d.aperturaMinuto >= 0 && d.aperturaMinuto < 1440
+        && d.aperturaMinuto % 30 == 0
+        && d.cierreMinuto is int
+        && d.cierreMinuto > 0 && d.cierreMinuto <= 1440
+        && d.cierreMinuto % 30 == 0
+        && d.aperturaMinuto != d.cierreMinuto
+        && d.duracionTurnoMinutos is int
+        && d.duracionTurnoMinutos >= 30 && d.duracionTurnoMinutos <= 240
+        && d.duracionTurnoMinutos % 30 == 0;
+    }
+
+    // La direccion y la tarifa siguen siendo por cancha: sin las dos, la
+    // cancha no aparece en la web ni acepta reservas aunque este habilitada.
+    function reservable(c) {
+      return c.activa == true
+        && c.direccion is string && c.direccion.size() > 0
+        && c.tarifaTurnoCentimos is int
+        && c.tarifaTurnoCentimos >= 0 && c.tarifaTurnoCentimos <= 100000000;
+    }
+
+    function horarioNegocioConfigurado(n) {
+      let ruta = /databases/$(database)/documents/negocios/$(n);
+      return exists(ruta) && horarioValido(get(ruta).data);
+    }
+
+    // Ternarios y cuerpos con if no compilan en el emulador, asi que el cruce
+    // de medianoche se expresa como una sola formula booleana.
+    function cabe(h, r) {
+      return r.minuto >= h.aperturaMinuto
+        && (r.minuto + r.duracion <= h.cierreMinuto
+          || (h.cierreMinuto < h.aperturaMinuto
+            && r.minuto + r.duracion <= h.cierreMinuto + 1440))
+        || (h.cierreMinuto < h.aperturaMinuto
+          && r.minuto < h.cierreMinuto
+          && r.minuto + r.duracion <= h.cierreMinuto);
+    }
+
+    function dentroHorario(n, r) {
+      let c = get(/databases/$(database)/documents/negocios/$(n)/canchas/$(r.canchaId)).data;
+      let h = get(/databases/$(database)/documents/negocios/$(n)).data;
+      return horarioValido(h)
+        && reservable(c)
+        && r.duracion % h.duracionTurnoMinutos == 0
+        && (r.minuto - h.aperturaMinuto + 1440) % h.duracionTurnoMinutos == 0
+        && cabe(h, r);
+    }
+
+    function horarioPublicoIgual(ruta, privado) {
+      let p = getAfter(ruta).data;
+      return p.aperturaMinuto == privado.aperturaMinuto
+        && p.cierreMinuto == privado.cierreMinuto
+        && p.duracionTurnoMinutos == privado.duracionTurnoMinutos;
+    }
+
+    // El horario global vive en el documento privado y se proyecta al publico.
+    // Se compara contra el estado posterior de la escritura, no con get(), para
+    // que tambien funcione cuando el negocio se escribe en el mismo lote.
+    function horarioPublicoSincronizado(n, privado) {
+      let ruta = /databases/$(database)/documents/negocios_publicos/$(n);
+      return existsAfter(ruta) && horarioPublicoIgual(ruta, privado);
+    }
+
+    function canchaPublicaIgual(ruta, n, id, c) {
+      let p = getAfter(ruta).data;
+      return p.id == id
+        && p.negocioId == n
+        && p.sedeId == c.sedeId
+        && p.nombre == c.nombre
+        && p.direccion == c.direccion
+        && p.activa == reservable(c)
+        && p.tarifaTurnoCentimos == c.tarifaTurnoCentimos;
+    }
+
+    function canchaPublicaSincronizada(n, id, c) {
+      let ruta = /databases/$(database)/documents/canchas_publicas/$(id);
+      return existsAfter(ruta) && canchaPublicaIgual(ruta, n, id, c);
+    }
+
+    function promocionPublicaIgual(ruta, n, p0) {
+      let p = getAfter(ruta).data;
+      return p.negocioId == n && p.titulo == p0.titulo
+        && p.descripcion == p0.descripcion && p.sedes == p0.sedes
+        && p.desde == p0.desde && p.hasta == p0.hasta
+        && p.activa == p0.activa
+        && p.descuentoCentimos == p0.descuentoCentimos;
+    }
+
+    function promocionPublicaSincronizada(n, id, p) {
+      let ruta = /databases/$(database)/documents/promociones_publicas/$(id);
+      return existsAfter(ruta) && promocionPublicaIgual(ruta, n, p);
+    }
+
+    function camposReservaValidos(n, r, coleccion) {
+      return r.keys().hasOnly([
+          'schemaVersion', 'negocioId', 'sedeId', 'canchaId', 'dia', 'dias',
+          'minuto', 'duracion', 'inicio', 'fin', 'slots', 'estado', 'bloqueo',
+          'clienteId', 'clienteNombre', 'telefono', 'montoCentimos',
+          'adelantoCentimos', 'saldoCentimos', 'metodoPago', 'promocionId',
+          'origen', 'solicitanteUid', 'creadoPor', 'atendidoPor',
+          'createdAt', 'updatedAt', 'version'
+        ])
+        && r.schemaVersion == 3
+        && negocioCoincide(n)
+        && r.negocioId == n
+        && sedeValida(r.canchaId)
+        && r.sedeId == r.canchaId
+        && r.dia is string && r.dia.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && r.dias is list && r.dias.size() >= 1 && r.dias.size() <= 2
+        && r.slots is list && r.slots.size() >= 1 && r.slots.size() <= 8
+        && r.minuto is int && r.minuto >= 0 && r.minuto < 1440 && r.minuto % 30 == 0
+        && duracionValida(r.duracion)
+        && r.inicio is timestamp && r.fin == r.inicio + duration.value(r.duracion, 'm')
+        && r.version == 1
+        && r.montoCentimos is int && r.montoCentimos >= 0
+        && r.adelantoCentimos is int && r.adelantoCentimos >= 0
+        && r.adelantoCentimos <= r.montoCentimos
+        && r.saldoCentimos == r.montoCentimos - r.adelantoCentimos
+        && r.metodoPago in ['yape', 'efectivo']
+        && r.promocionId is string && r.promocionId.size() <= 100
+        && r.clienteNombre is string && r.clienteNombre.size() > 0
+        && r.clienteNombre.size() <= 120
+        && r.telefono is string && r.telefono.size() <= 24
+        && dentroHorario(n, r)
+        && camposSegunColeccion(coleccion, r);
+    }
+
+    // El emulador de Firestore no compila cuerpos con if ni ternarios, asi que
+    // cada variante se expresa como una formula booleana.
+    function camposSegunColeccion(coleccion, r) {
+      return coleccion == 'bloqueos' && camposBloqueo(r)
+        || coleccion == 'reservas' && camposReserva(r);
+    }
+
+    function camposBloqueo(r) {
+      return r.bloqueo == true
+        && r.clienteId == '' && r.telefono == ''
+        && r.montoCentimos == 0 && r.adelantoCentimos == 0;
+    }
+
+    function camposReserva(r) {
+      return r.bloqueo == false
+        && r.telefono.size() >= 7
+        && r.clienteId is string && r.clienteId.size() <= 100
+        && ((r.origen == 'publico' && r.clienteId == '')
+          || (r.origen == 'personal' && r.clienteId.size() > 0));
+    }
+
+    function altaPersonal(n, id, coleccion, r) {
+      return puede(n, 'reservas')
+        && r.estado == 'confirmada'
+        && r.origen == 'personal'
+        && r.solicitanteUid == ''
+        && r.creadoPor == request.auth.uid
+        && r.atendidoPor == request.auth.uid
+        && slotsCreados(n, id, coleccion, r);
+    }
+
+    function altaPublica(n, id, coleccion, r) {
+      return coleccion == 'reservas'
+        && anonimo()
+        && id.size() >= 10 && id.size() <= 102
+        && id.matches('^r_[A-Za-z0-9_-]*$')
+        && r.estado == 'pendiente'
+        && r.origen == 'publico'
+        && r.solicitanteUid == request.auth.uid
+        && r.creadoPor == request.auth.uid
+        && r.atendidoPor == ''
+        && r.clienteId == ''
+        && r.montoCentimos == 0
+        && r.adelantoCentimos == 0
+        && r.inicio >= request.time - duration.value(5, 'm')
+        && r.inicio <= request.time + duration.value(180, 'd')
+        && slotsCreados(n, id, coleccion, r);
+    }
+
+    function reservaValida(n, id, coleccion) {
+      let r = request.resource.data;
+      return camposReservaValidos(n, r, coleccion)
+        && diasValidos(r)
+        && (altaPersonal(n, id, coleccion, r)
+          || altaPublica(n, id, coleccion, r));
+    }
+
+    function transicionValida(n) {
+      let antes = resource.data;
+      let ahora = request.resource.data;
+      return puede(n, 'reservas')
+        && antes.estado in ['pendiente', 'confirmada']
+        && ahora.estado in ['confirmada', 'cancelada', 'no_asistio']
+        && ahora.version == antes.version + 1
+        && ahora.diff(antes).affectedKeys().hasOnly([
+          'estado', 'montoCentimos', 'adelantoCentimos', 'saldoCentimos',
+          'atendidoPor', 'updatedAt', 'version'
+        ])
+        && ahora.atendidoPor == request.auth.uid
+        && ahora.montoCentimos is int && ahora.montoCentimos >= 0
+        && montoNoBaja(antes, ahora)
+        && ahora.adelantoCentimos is int
+        && ahora.adelantoCentimos >= antes.adelantoCentimos
+        && ahora.adelantoCentimos <= ahora.montoCentimos
+        && ahora.saldoCentimos == ahora.montoCentimos - ahora.adelantoCentimos
+        && franjasCoherentes(n, antes, ahora);
+    }
+
+    // Cobrar nunca deja el monto anterior por debajo, y una reserva confirmada
+    // mantiene el monto que ya tenia. El emulador no admite if en las reglas.
+    function montoNoBaja(antes, ahora) {
+      return antes.estado == 'pendiente'
+          && ahora.montoCentimos >= antes.montoCentimos
+        || antes.estado == 'confirmada'
+          && ahora.montoCentimos == antes.montoCentimos;
+    }
+
+    // Cancelar libera las franjas; confirmar o registrar el ausente las deja.
+    function franjasCoherentes(n, antes, ahora) {
+      return ahora.estado == 'cancelada' && slotsLiberados(n, antes)
+        || ahora.estado != 'cancelada' && slotsPresentes(n, antes);
+    }
+
+    // diff() solo admite mapas: hay que comparar .data con .data. Con snapshots
+    // la expresion falla y el emulador deniega cualquier cambio real.
+    function camposNegocioPermitidos(despues, antes) {
+      return despues.data.propietarioUid == antes.data.propietarioUid
+        && despues.data.diff(antes.data).affectedKeys().hasOnly([
+          'nombre', 'descripcion', 'telefonoPublico', 'whatsapp', 'galeria',
+          'aperturaMinuto', 'cierreMinuto', 'duracionTurnoMinutos',
+          'horarioActualizadoEn', 'horarioActualizadoPor', 'actualizadoEn'
+        ]);
+    }
+
+    function slotCoincide(s, r, i, o) {
+      return slotBaseValido(s, r, i)
+        && s.year == o.year && s.month == o.month && s.day == o.day
+        && s.minute == o.minute && s.inicio == o.inicio;
+    }
+
+    function datosFranjaReserva(ruta, cancha, o) {
+      let d = getAfter(ruta).data;
+      return d.canchaId == cancha && d.slots.size() > o.indice;
+    }
+
+    function franjaDeReserva(n, cancha, o) {
+      let ruta = /databases/$(database)/documents/negocios/$(n)/$(o.coleccion)/$(o.reservaId);
+      return !exists(ruta) && existsAfter(ruta) && datosFranjaReserva(ruta, cancha, o);
+    }
+
+    // La franja solo puede nacer junto a su reserva: sin esta comprobacion un
+    // cliente podria recrear la ocupacion de una reserva cancelada.
+    function ocupacionValida(n, cancha, year, month, day, minute) {
+      let o = request.resource.data;
+      return o.keys().hasOnly(['reservaId', 'coleccion', 'canchaId', 'year', 'month', 'day', 'minute', 'inicio', 'indice'])
+        && o.coleccion in ['reservas', 'bloqueos']
+        && o.reservaId is string
+        && o.reservaId.size() > 0 && o.reservaId.size() <= 128
+        && o.canchaId == cancha && o.year == year && o.month == month
+        && o.day == day && o.minute == minute && o.inicio is timestamp
+        && franjaDeReserva(n, cancha, o)
+        && slotCoincide(getAfter(
+          /databases/$(database)/documents/negocios/$(n)/$(o.coleccion)/$(o.reservaId)).data.slots[o.indice],
+          getAfter(/databases/$(database)/documents/negocios/$(n)/$(o.coleccion)/$(o.reservaId)).data,
+          o.indice, o);
+    }
+
+    function liberaOcupacion(n) {
+      let o = resource.data;
+      let ruta = /databases/$(database)/documents/negocios/$(n)/$(o.coleccion)/$(o.reservaId);
+      return puede(n, 'reservas')
+        && existsAfter(ruta)
+        && getAfter(ruta).data.estado == 'cancelada';
+    }
+
+    match /sistema/grass {
+      allow get: if identidadPersonal();
+      allow create: if reclamoValido();
+      allow update, delete: if false;
+    }
+
+    match /users/{uid} {
+      allow get: if autenticado() && request.auth.uid == uid;
+      // La ficha propia se puede crear y completar en cualquier momento: sin
+      // negocio al verificarse, y con el negocio al fundarlo. El negocioId nunca
+      // se inventa: o falta, o es el confirmado o el que crea esta transaccion.
+      allow create: if ((verificado() && request.auth.uid == uid) || esAdministrador() || reclamoValido())
+        && (!('negocioId' in request.resource.data)
+          || request.resource.data.negocioId == null
+          || negocioCoincideReferencia(request.resource.data.negocioId));
+      allow update: if esAdministrador()
+        || reclamoValido()
+        || (verificado() && request.auth.uid == uid
+          && resource.data.negocioId == request.resource.data.negocioId
+          && (!('negocioId' in request.resource.data)
+            || request.resource.data.negocioId == null
+            || negocioCoincideReferencia(request.resource.data.negocioId)));
+      allow delete: if false;
+    }
+
+    match /negocios/{n} {
+      allow get: if puede(n, 'agenda');
+      allow list: if false;
+      allow create: if esAdministradorDe(n)
+        && request.resource.data.propietarioUid == request.auth.uid;
+      // El horario global solo lo cambia el administrador, y en la misma
+      // escritura queda proyectado a negocios_publicos.
+      allow update: if esAdministradorDe(n)
+        && resource.data.get('propietarioUid', '') == request.auth.uid
+        && request.resource.data.get('propietarioUid', '') == resource.data.get('propietarioUid', '')
+        && camposNegocioPermitidos(request.resource, resource)
+        && horarioValido(request.resource.data)
+        && horarioPublicoSincronizado(n, request.resource.data);
       allow delete: if false;
 
-      // users/{userId}/plan/{planId} — privado al propietario.
-      match /plan/{planId} {
-        allow read, write: if isSignedIn() && request.auth.uid == userId;
+      match /sedes/{id} {
+        allow read: if puede(n, 'agenda');
+        allow create, update: if esAdministradorDe(n) && sedeValida(id);
+        allow delete: if false;
+      }
+
+      match /canchas/{id} {
+        allow read: if puede(n, 'agenda');
+        allow create: if esAdministradorDe(n) && sedeValida(id)
+          && request.resource.data.id == id
+          && request.resource.data.sedeId == id
+          && request.resource.data.activa == false
+          && request.resource.data.direccion == ''
+          && request.resource.data.tarifaTurnoCentimos == null;
+        // La direccion y la tarifa pueden quedar vacias: la cancha simplemente
+        // no es reservable y no se proyecta activa a la web.
+        allow update: if esAdministradorDe(n)
+          && resource.data.sedeId == id
+          && request.resource.data.sedeId == resource.data.sedeId
+          && request.resource.data.id == resource.data.id
+          && request.resource.data.activa is bool
+          && request.resource.data.direccion is string
+          && request.resource.data.direccion.size() <= 200
+          && (request.resource.data.tarifaTurnoCentimos == null
+            || (request.resource.data.tarifaTurnoCentimos is int
+              && request.resource.data.tarifaTurnoCentimos >= 0
+              && request.resource.data.tarifaTurnoCentimos <= 100000000))
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'nombre', 'direccion', 'activa', 'tarifaTurnoCentimos',
+            'actualizadoEn'
+          ])
+          && canchaPublicaSincronizada(n, id, request.resource.data);
+        allow delete: if false;
+      }
+
+      match /empleados/{uid} {
+        allow get: if esAdministradorDe(n)
+          || (autenticado() && request.auth.uid == uid);
+        allow list: if esAdministradorDe(n) && limite(100);
+        allow create: if esAdministradorDe(n)
+          && uid != request.auth.uid
+          && request.resource.data.rol == 'empleado_control'
+          && request.resource.data.activo is bool
+          && request.resource.data.permisos.agenda == true
+          && request.resource.data.sedes is list
+          && request.resource.data.sedes.size() >= 1
+          && request.resource.data.sedes.size() <= 3
+          && request.resource.data.sedePrincipal in request.resource.data.sedes
+          && request.resource.data.nombre is string
+          && request.resource.data.nombre.size() > 0
+          && request.resource.data.nombre.size() <= 120;
+        allow update: if esAdministradorDe(n)
+          && resource.data.rol == 'empleado_control'
+          && request.resource.data.rol == 'empleado_control'
+          && request.resource.data.permisos.agenda == true
+          && request.resource.data.sedes.size() >= 1
+          && request.resource.data.sedes.size() <= 3
+          && request.resource.data.sedePrincipal in request.resource.data.sedes;
+        allow delete: if false;
+      }
+
+      match /clientes/{id} {
+        allow get: if puede(n, 'clientes');
+        allow list: if puede(n, 'clientes') && limite(50);
+        allow create, update: if puede(n, 'clientes')
+          && request.resource.data.nombre is string
+          && request.resource.data.nombre.size() > 0
+          && request.resource.data.nombre.size() <= 120
+          && request.resource.data.nombreBusqueda is string
+          && request.resource.data.nombreBusqueda.size() <= 200
+          && request.resource.data.telefono is string
+          && request.resource.data.telefono.size() <= 24;
+        allow delete: if false;
+      }
+
+      match /promociones/{id} {
+        allow get: if puede(n, 'agenda');
+        allow list: if puede(n, 'agenda') && limite(100);
+        allow create, update: if puede(n, 'promociones')
+          && request.resource.data.titulo is string
+          && request.resource.data.titulo.size() > 0
+          && request.resource.data.titulo.size() <= 120
+          && request.resource.data.descripcion is string
+          && request.resource.data.descripcion.size() <= 1000
+          && request.resource.data.descuentoCentimos is int
+          && request.resource.data.descuentoCentimos >= 0
+          && request.resource.data.activa is bool
+          && request.resource.data.desde.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+          && request.resource.data.hasta.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+          && request.resource.data.desde <= request.resource.data.hasta
+          && request.resource.data.sedes is list
+          && request.resource.data.sedes.size() >= 1
+          && request.resource.data.sedes.size() <= 3
+          && promocionPublicaSincronizada(n, id, request.resource.data);
+        allow delete: if false;
+      }
+
+      match /reservas/{id} {
+        allow get: if puede(n, 'agenda')
+          || (anonimo()
+            && (!exists(/databases/$(database)/documents/negocios/$(n)/reservas/$(id))
+              || resource.data.solicitanteUid == request.auth.uid));
+        allow list: if puede(n, 'agenda') && limite(1500);
+        allow create: if reservaValida(n, id, 'reservas');
+        allow update: if transicionValida(n);
+        allow delete: if false;
+      }
+
+      match /bloqueos/{id} {
+        allow get: if puede(n, 'agenda');
+        allow list: if puede(n, 'agenda') && limite(1500);
+        allow create: if reservaValida(n, id, 'bloqueos');
+        allow update: if transicionValida(n);
+        allow delete: if false;
+      }
+
+      match /agenda/{cancha}/anios/{year}/meses/{month}/dias/{day}/franjas/{minute} {
+        allow read: if true;
+        allow create: if ocupacionValida(n, cancha, year, month, day, minute);
+        allow update: if false;
+        allow delete: if liberaOcupacion(n);
       }
     }
 
-    // ─────────────────────────────────────────────────────────────────────
-    // negocios/{negocioId}
-    //   Creación: propietarioUid debe coincidir con el uid autenticado.
-    //   Lectura/edición/eliminación: solo el propietario.
-    // ─────────────────────────────────────────────────────────────────────
-    match /negocios/{negocioId} {
-      allow read: if isSignedIn() &&
-        resource.data.propietarioUid == request.auth.uid;
-      allow create: if isSignedIn() &&
-        request.resource.data.propietarioUid == request.auth.uid &&
-        request.resource.data.webActiva is bool;
-      allow update: if isSignedIn() &&
-        resource.data.propietarioUid == request.auth.uid &&
-        request.resource.data.propietarioUid == resource.data.propietarioUid &&
-        request.resource.data.webActiva is bool &&
-        (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['webActiva']) ||
-          cambioWebPrivadoSincronizado(
-            negocioId,
-            resource.data,
-            request.resource.data
-          ));
-      allow delete: if isSignedIn() &&
-        resource.data.propietarioUid == request.auth.uid;
-
-      // Subcolecciones privadas del negocio.
-      match /pedidos/{document=**} {
-        allow read, write: if false;
-      }
-      match /reclamaciones/{document=**} {
-        allow read, write: if false;
-      }
-      match /promociones/{document=**} {
-        allow read, write: if false;
-      }
-      match /suscripcion/{document=**} {
-        allow read, write: if false;
-      }
-      match /inventario_privado/{document=**} {
-        allow read, write: if false;
-      }
-
-      // negocios/{negocioId}/productos/{productoId}
-      //   Propietario: lee y administra todos sus productos.
-      //   Visitantes: solo lectura de productos con disponible == true
-      //   (la tienda pública consulta where('disponible', '==', true)).
-      //   El producto conserva siempre el negocioId correcto.
-      match /productos/{productoId} {
-        allow read: if esDuenoNegocio(negocioId) || resource.data.disponible == true;
-        allow create: if esDuenoNegocio(negocioId) &&
-          request.resource.data.negocioId == negocioId;
-        allow update: if esDuenoNegocio(negocioId) &&
-          request.resource.data.negocioId == negocioId;
-        allow delete: if esDuenoNegocio(negocioId);
-      }
+    match /canchas_publicas/{id} {
+      allow read: if resource.data.activa == true;
+      allow create, update: if esAdministradorDe(request.resource.data.negocioId)
+        && sedeValida(id)
+        && request.resource.data.id == id
+        && request.resource.data.sedeId == id
+        && request.resource.data.keys().hasAll([
+          'id', 'negocioId', 'nombre', 'sedeId', 'direccion', 'activa',
+          'tarifaTurnoCentimos', 'actualizadoEn'
+        ])
+        && request.resource.data.keys().hasOnly([
+          'id', 'negocioId', 'nombre', 'sedeId', 'direccion', 'activa',
+          'tarifaTurnoCentimos', 'actualizadoEn'
+        ])
+        && existsAfter(/databases/$(database)/documents/negocios/$(request.resource.data.negocioId)/canchas/$(id))
+        && canchaPublicaSincronizada(
+          request.resource.data.negocioId,
+          id,
+          getAfter(/databases/$(database)/documents/negocios/$(request.resource.data.negocioId)/canchas/$(id)).data
+        );
+      allow delete: if false;
     }
 
-    // ─────────────────────────────────────────────────────────────────────
-    // negocios_publicos/{slug}
-    //   Lectura pública SOLO si webActiva == true.
-    //   El propietario lee su documento aunque esté desactivado.
-    //   Solo el propietario crea, edita o elimina.
-    //   El negocioId no puede cambiar en una actualización.
-    // ─────────────────────────────────────────────────────────────────────
-    match /negocios_publicos/{slug} {
-      allow read: if resource.data.webActiva == true ||
-        esDuenoNegocioPublico(resource.data);
-
-      allow create: if isSignedIn() &&
-        esDuenoNegocioPublicoDespues(request.resource.data) &&
-        proyeccionWebActivaValida(slug, request.resource.data);
-
-      allow update: if isSignedIn() &&
-        esDuenoNegocioPublico(resource.data) &&
-        request.resource.data.negocioId == resource.data.negocioId &&
-        proyeccionWebActivaValida(slug, request.resource.data) &&
-        cambioWebPublicoSincronizado(resource.data, request.resource.data);
-
-      allow delete: if isSignedIn() &&
-        esDuenoNegocioPublico(resource.data);
+    match /promociones_publicas/{id} {
+      allow read: if resource.data.activa == true;
+      allow create, update: if puede(request.resource.data.negocioId, 'promociones')
+        && request.resource.data.keys().hasAll([
+          'negocioId', 'titulo', 'descripcion', 'sedes', 'desde', 'hasta',
+          'activa', 'descuentoCentimos', 'actualizadoEn'
+        ])
+        && request.resource.data.keys().hasOnly([
+          'negocioId', 'titulo', 'descripcion', 'sedes', 'desde', 'hasta',
+          'activa', 'descuentoCentimos', 'actualizadoEn'
+        ])
+        && existsAfter(/databases/$(database)/documents/negocios/$(request.resource.data.negocioId)/promociones/$(id))
+        && promocionPublicaSincronizada(
+          request.resource.data.negocioId,
+          id,
+          getAfter(/databases/$(database)/documents/negocios/$(request.resource.data.negocioId)/promociones/$(id)).data
+        );
+      allow delete: if false;
     }
 
-    // ─────────────────────────────────────────────────────────────────────
-    // Ruta final: deniega explícitamente cualquier ruta no declarada.
-    // ─────────────────────────────────────────────────────────────────────
+    match /negocios_publicos/{id} {
+      allow read: if true;
+      allow create, update: if esAdministradorDe(id)
+        && request.resource.data.negocioId == id
+        && request.resource.data.keys().hasAll([
+          'negocioId', 'slug', 'nombre', 'descripcion', 'galeria',
+          'aperturaMinuto', 'cierreMinuto', 'duracionTurnoMinutos'
+        ])
+        && request.resource.data.keys().hasOnly([
+          'negocioId', 'slug', 'nombre', 'descripcion', 'telefonoPublico',
+          'whatsapp', 'galeria', 'aperturaMinuto', 'cierreMinuto',
+          'duracionTurnoMinutos', 'horarioActualizadoEn',
+          'horarioActualizadoPor', 'actualizadoEn'
+        ])
+        && horarioValido(request.resource.data)
+        && existsAfter(/databases/$(database)/documents/negocios/$(id))
+        && horarioPublicoSincronizado(id, getAfter(
+          /databases/$(database)/documents/negocios/$(id)).data)
+        && request.resource.data.slug is string
+        && request.resource.data.slug.matches('^[a-z0-9][a-z0-9-]{2,49}$')
+        && request.resource.data.nombre is string
+        && request.resource.data.nombre.size() > 0
+        && request.resource.data.nombre.size() <= 120
+        && request.resource.data.descripcion is string
+        && request.resource.data.descripcion.size() <= 1000
+        && request.resource.data.get('telefonoPublico', '') is string
+        && request.resource.data.get('telefonoPublico', '').size() <= 40
+        && request.resource.data.get('whatsapp', '') is string
+        && request.resource.data.get('whatsapp', '').size() <= 40
+        && request.resource.data.galeria is list
+        && request.resource.data.galeria.size() <= 12;
+      allow delete: if false;
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

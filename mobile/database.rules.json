@@ -1,0 +1,46 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "acceso": {
+      "$negocio": {
+        "$uid": {
+          ".read": "auth != null && $negocio === 'grass-sintetico' && (auth.uid === $uid || (root.child('acceso').child($negocio).child(auth.uid).child('activo').val() === true && root.child('acceso').child($negocio).child(auth.uid).child('rol').val() === 'administrador'))",
+          ".write": "auth != null && $negocio === 'grass-sintetico' && auth.uid !== $uid && root.child('acceso').child($negocio).child(auth.uid).child('activo').val() === true && root.child('acceso').child($negocio).child(auth.uid).child('rol').val() === 'administrador'",
+          ".validate": "!newData.exists() || (newData.hasChildren(['rol','activo','nombre']) && newData.child('rol').val() === 'empleado_control' && newData.child('activo').val() === true && newData.child('nombre').isString() && newData.child('nombre').val().length > 0 && newData.child('nombre').val().length <= 80)",
+          "rol": { ".validate": "newData.isString()" },
+          "activo": { ".validate": "newData.isBoolean()" },
+          "nombre": { ".validate": "newData.isString()" },
+          "$otro": { ".validate": false }
+        }
+      }
+    },
+    "presencia": {
+      "$negocio": {
+        "$cancha": {
+          "$dia": {
+            ".read": "auth != null && auth.token.firebase.sign_in_provider !== 'anonymous' && $negocio === 'grass-sintetico' && ($cancha === 'la-19' || $cancha === 'la-23' || $cancha === 'la-24') && $dia.matches(/^\\d{4}-\\d{2}-\\d{2}$/) && root.child('acceso').child($negocio).child(auth.uid).child('activo').val() === true && (root.child('acceso').child($negocio).child(auth.uid).child('rol').val() === 'administrador' || root.child('acceso').child($negocio).child(auth.uid).child('rol').val() === 'empleado_control')",
+            "$minuto": {
+              "$uid": {
+                "$sesion": {
+                  ".write": "auth != null && auth.uid === $uid && auth.token.firebase.sign_in_provider !== 'anonymous' && $negocio === 'grass-sintetico' && ($cancha === 'la-19' || $cancha === 'la-23' || $cancha === 'la-24') && $dia.matches(/^\\d{4}-\\d{2}-\\d{2}$/) && $minuto.matches(/^(0|30|60|90|120|150|180|210|240|270|300|330|360|390|420|450|480|510|540|570|600|630|660|690|720|750|780|810|840|870|900|930|960|990|1020|1050|1080|1110|1140|1170|1200|1230|1260|1290|1320|1350|1380|1410)$/) && $sesion.matches(/^[A-Za-z0-9_-]{16,96}$/) && root.child('acceso').child($negocio).child(auth.uid).child('activo').val() === true && (root.child('acceso').child($negocio).child(auth.uid).child('rol').val() === 'administrador' || root.child('acceso').child($negocio).child(auth.uid).child('rol').val() === 'empleado_control')",
+                  ".validate": "!newData.exists() || (newData.hasChildren(['uid','sesionId','canchaId','dia','minuto','nombre','estado','actualizadoEn','expiraEn']) && newData.child('uid').val() === auth.uid && newData.child('sesionId').val() === $sesion && newData.child('canchaId').val() === $cancha && newData.child('dia').val() === $dia && newData.child('minuto').val() === $minuto && newData.child('nombre').val() === root.child('acceso').child($negocio).child(auth.uid).child('nombre').val() && (newData.child('estado').val() === 'preparando' || newData.child('estado').val() === 'guardando') && newData.child('actualizadoEn').isNumber() && newData.child('actualizadoEn').val() <= now + 60000 && newData.child('expiraEn').isNumber() && newData.child('expiraEn').val() > now - 60000 && newData.child('expiraEn').val() <= now + 1800000)",
+                  "uid": { ".validate": "newData.isString()" },
+                  "sesionId": { ".validate": "newData.isString()" },
+                  "canchaId": { ".validate": "newData.isString()" },
+                  "dia": { ".validate": "newData.isString()" },
+                  "minuto": { ".validate": "newData.isString()" },
+                  "nombre": { ".validate": "newData.isString()" },
+                  "estado": { ".validate": "newData.isString()" },
+                  "actualizadoEn": { ".validate": "newData.isNumber()" },
+                  "expiraEn": { ".validate": "newData.isNumber()" },
+                  "$otro": { ".validate": false }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -3,69 +3,21 @@
     "platforms": {
       "android": {
         "default": {
-          "projectId": "yapiventa",
-          "appId": "1:359947632947:android:67993841ad6953dd1ebe46",
+          "projectId": "glass-sintetico",
+          "appId": "1:666840330833:android:b0295de0063a8cf968be70",
           "fileOutput": "android/app/google-services.json"
         }
       },
       "dart": {
         "lib/firebase_options.dart": {
-          "projectId": "yapiventa",
+          "projectId": "glass-sintetico",
           "configurations": {
-            "android": "1:359947632947:android:67993841ad6953dd1ebe46",
-            "ios": "1:359947632947:ios:9da06812f7d4778e1ebe46",
-            "macos": "1:359947632947:ios:9da06812f7d4778e1ebe46",
-            "web": "1:359947632947:web:4dc78637cedac4081ebe46",
-            "windows": "1:359947632947:web:0672dad2a4c431e41ebe46"
+            "android": "1:666840330833:android:b0295de0063a8cf968be70",
+            "ios": "1:666840330833:ios:45174d3d0ce7c1aa68be70",
+            "web": "1:666840330833:web:cf55eab78a7c087d68be70"
           }
         }
       }
     }
-  },
-  "firestore": {
-    "rules": "firestore.rules"
-  },
-  "hosting": {
-    "public": "build/web",
-    "ignore": [
-      "firebase.json",
-      "**/.*",
-      "**/node_modules/**"
-    ],
-    "headers": [
-      {
-        "source": "/index.html",
-        "headers": [
-          {
-            "key": "Cache-Control",
-            "value": "no-cache, no-store, must-revalidate"
-          }
-        ]
-      },
-      {
-        "source": "/main.dart.js",
-        "headers": [
-          {
-            "key": "Cache-Control",
-            "value": "no-cache, no-store, must-revalidate"
-          }
-        ]
-      },
-      {
-        "source": "/flutter_service_worker.js",
-        "headers": [
-          {
-            "key": "Cache-Control",
-            "value": "no-cache, no-store, must-revalidate"
-          }
-        ]
-      }
-    ],
-    "rewrites": [
-      {
-        "source": "**",
-        "destination": "/index.html"
-      }
-    ]
   }
 }
