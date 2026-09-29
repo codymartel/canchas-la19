@@ -1,93 +1,26 @@
-<!DOCTYPE html>
-<html lang="es">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="robots" content="noindex">
-  <title>Tienda YapiVenta</title>
-  <style>
-    :root {
-      color-scheme: dark;
-      font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    }
-
-    * { box-sizing: border-box; }
-
-    body {
-      min-height: 100vh;
-      margin: 0;
-      display: grid;
-      place-items: center;
-      padding: 24px;
-      color: #edf5ff;
-      background:
-        radial-gradient(circle at 20% 20%, rgba(30, 136, 229, 0.2), transparent 34%),
-        #070c18;
-    }
-
-    main {
-      width: min(100%, 520px);
-      padding: 40px;
-      border: 1px solid #1a3050;
-      border-radius: 20px;
-      background: #0a1b2e;
-      box-shadow: 0 24px 70px rgba(0, 0, 0, 0.35);
-    }
-
-    .marca {
-      margin: 0 0 12px;
-      color: #64b5f6;
-      font-size: 13px;
-      font-weight: 800;
-      letter-spacing: 0.14em;
-      text-transform: uppercase;
-    }
-
-    h1 {
-      margin: 0;
-      font-size: clamp(28px, 7vw, 42px);
-      line-height: 1.08;
-    }
-
-    p {
-      margin: 18px 0 0;
-      color: #a9bed2;
-      font-size: 16px;
-      line-height: 1.6;
-    }
-
-    .indicador {
-      width: 34px;
-      height: 34px;
-      margin-top: 28px;
-      border: 3px solid rgba(100, 181, 246, 0.25);
-      border-top-color: #64b5f6;
-      border-radius: 50%;
-      animation: girar 0.8s linear infinite;
-    }
-
-    .error h1 { font-size: clamp(25px, 6vw, 36px); }
-    .error .indicador { display: none; }
-
-    @keyframes girar { to { transform: rotate(360deg); } }
-
-    @media (max-width: 560px) {
-      main { padding: 30px 24px; }
-    }
-  </style>
-</head>
-<body>
-  <main id="estado" aria-live="polite" aria-busy="true">
-    <p class="marca">YapiVenta</p>
-    <h1>Preparando tu tienda</h1>
-    <p id="mensaje">Estamos buscando el negocio y su plantilla.</p>
-    <div class="indicador" aria-hidden="true"></div>
-  </main>
-
-  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
-  <script src="/moldes/shared/firebase-config.js"></script>
-  <script src="/moldes/shared/cargar-negocio.js"></script>
-  <script src="/resolver-tienda.js"></script>
-</body>
-</html>
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="Grass Sintético en Huánuco. La 19, La 23 y La 24: disponibilidad y solicitudes de reserva."><title>Grass Sintético · Reserva tu cancha</title><link rel="stylesheet" href="styles.css"></head>
+<body><header><div><p class="ceja">HUÁNUCO · RESERVAS EN LÍNEA</p><h1 id="marca">Grass Sintético</h1><p id="descripcion">Tres canchas, una agenda compartida.</p><p id="contacto"></p></div><span class="balon" aria-hidden="true">19 · 23 · 24</span></header><main>
+  <section aria-labelledby="sedes-titulo"><h2 id="sedes-titulo">Nuestras sedes</h2><div id="sedes" class="grid"><article><h3>La 19</h3></article><article><h3>La 23</h3></article><article><h3>La 24</h3></article></div></section>
+  <section><h2>Solicita tu reserva</h2><p>Horarios de Huánuco (America/Lima). La solicitud ocupa el horario y queda pendiente de confirmación por el personal.</p>
+    <form id="reserva"><fieldset id="campos"><legend>Horario y contacto</legend>
+      <label>Fecha<input type="date" id="dia" required></label>
+      <label>Sede y cancha<select id="cancha" required><option value="">Cargando canchas…</option></select></label>
+      <label>Duración<select id="duracion"><option value="">Selecciona una cancha</option></select></label>
+      <label>Inicio disponible<select id="minuto" required></select></label>
+      <label>Promoción<select id="promocion"><option value="">Sin promoción</option></select></label>
+      <p id="precio" aria-live="polite"></p>
+      <label>Nombre completo<input id="nombre" autocomplete="name" maxlength="120" required></label>
+      <label>Teléfono<input id="telefono" type="tel" autocomplete="tel" placeholder="+51 999 999 999" maxlength="24" required></label>
+      <label>Adelanto<select id="metodo"><option value="yape">Yape manual · verificación del personal</option></select></label>
+      <p class="aviso-pago">El adelanto manual previsto es S/10 y debe verificarse por un empleado. Culqi, el vencimiento automático de 15 minutos y los mensajes automáticos de WhatsApp todavía no están habilitados.</p>
+      <label class="consentimiento"><input type="checkbox" required> Acepto que el personal use mis datos para gestionar esta reserva y su historial.</label>
+    </fieldset><button id="enviar" type="submit">Solicitar reserva</button><button id="nueva" type="button" hidden>Preparar otra solicitud</button></form>
+    <p id="estado" role="status" aria-live="polite">Conectando…</p><button id="recargar" class="secundario" type="button">Actualizar disponibilidad</button>
+  </section><section><h2>Promociones vigentes</h2><div id="promociones" class="grid"></div></section>
+  <section id="seccion-galeria" hidden><h2>Conoce las canchas</h2><div id="galeria" class="galeria"></div></section>
+</main><footer>Grass Sintético · Importes en soles. No ingreses contraseñas ni comprobantes bancarios aquí.</footer>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+<script src="firebase-config.js"></script><script type="module" src="app.js"></script></body></html>

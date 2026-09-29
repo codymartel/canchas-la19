@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 800" role="img" aria-label="Cancha 19 al atardecer">
+  <defs>
+    <linearGradient id="cielo" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0f3d2e"/>
+      <stop offset="55%" stop-color="#1f7a53"/>
+      <stop offset="100%" stop-color="#8fd18a"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="800" fill="url(#cielo)"/>
+  <rect y="470" width="1200" height="330" fill="#1f7a53"/>
+  <rect y="455" width="1200" height="18" fill="#f4f7f2" opacity="0.9"/>
+  <rect x="120" y="200" width="960" height="260" fill="none" stroke="#f4f7f2" stroke-width="8" opacity="0.85"/>
+  <rect x="330" y="200" width="540" height="260" fill="none" stroke="#f4f7f2" stroke-width="6" opacity="0.7"/>
+  <circle cx="600" cy="330" r="54" fill="none" stroke="#f4f7f2" stroke-width="6" opacity="0.7"/>
+  <text x="600" y="720" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="52" fill="#f4f7f2">La 19</text>
+</svg>

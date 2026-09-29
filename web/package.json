@@ -1,0 +1,1 @@
+{"name":"grass-web-publica","private":true,"type":"module","scripts":{"test":"node --test test/*.test.js","check":"node --check public/app.js && node --check public/reserva.js"}}

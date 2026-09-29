@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 800" role="img" aria-label="Cancha 24 de noche">
+  <defs>
+    <linearGradient id="noche24" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#050d1c"/>
+      <stop offset="100%" stop-color="#1b2b4a"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="800" fill="url(#noche24)"/>
+  <circle cx="960" cy="140" r="70" fill="#f4f7f2" opacity="0.85"/>
+  <rect y="470" width="1200" height="330" fill="#134b39"/>
+  <rect x="130" y="210" width="940" height="260" fill="none" stroke="#f4f7f2" stroke-width="8" opacity="0.85"/>
+  <rect x="350" y="210" width="500" height="260" fill="none" stroke="#f4f7f2" stroke-width="6" opacity="0.65"/>
+  <path d="M350 210 L850 470 M850 210 L350 470" stroke="#f4f7f2" stroke-width="4" opacity="0.4"/>
+  <text x="600" y="720" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="52" fill="#f4f7f2">La 24</text>
+</svg>
