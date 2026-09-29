@@ -1,11 +1,11 @@
 {
-    "name": "mobile",
-    "short_name": "mobile",
+    "name": "Grass Sintético · Panel",
+    "short_name": "Grass Panel",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#117448",
+    "theme_color": "#117448",
+    "description": "Panel privado de Grass Sintético: agenda, empleados, sedes, clientes y promociones de La 19, La 23 y La 24.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [
