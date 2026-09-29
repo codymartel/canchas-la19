@@ -277,6 +277,32 @@ function approvalBatch(db, booking, actor) {
   return batch;
 }
 
+// Toda asercion de estado pasa por una relectura del servidor: jamas se afirma
+// sobre el cuerpo que el cliente construyo, porque eso no prueba nada. El lector
+// puede ser otro cliente porque la agenda privada no es legible por el publico.
+async function assertEstadoYAgenda(escritor, booking, esperado, lector = escritor) {
+  const refLectura = doc(lector, 'negocios', BUSINESS, booking.collectionName, booking.id);
+  const stored = (await getDoc(refLectura)).data();
+  const minutos = operationalMinutes(booking);
+  assert.equal(stored.estado, esperado);
+  assert.equal(stored.version, 1);
+  assert.deepEqual(stored.minutos, minutos);
+  const agenda = await getDoc(agendaRef(lector, booking));
+  const publica = await getDoc(publicSlotRef(lector, booking));
+  if (esperado === 'confirmada') {
+    const ocupados = Object.fromEntries(minutos.map(minuto => [minuto, true]));
+    assert.deepEqual(agenda.data().ocupados, ocupados);
+    assert.deepEqual(publica.data().ocupados, ocupados);
+    assert.equal(agenda.data().ultimaOperacion.reservaId, booking.id);
+    assert.equal(agenda.data().ultimaOperacion.tipo, 'ocupar');
+    assert.deepEqual(agenda.data().ultimaOperacion.minutos, minutos);
+  } else {
+    assert.equal(agenda.exists(), false);
+    assert.equal(publica.exists(), false);
+  }
+  return stored;
+}
+
 function employeeRecord({ active = true, reservations = true } = {}) {
   return {
     nombre: 'Empleado de control',
@@ -745,7 +771,7 @@ for (const duration of [30, 60, 90, 120, 150, 180, 210, 240, 300, 360, 420, 480,
       duration,
     });
     await assertSucceeds(bookingBatch(employee, personal).commit());
-    assert.equal(personal.body.estado, duration <= 180 ? 'confirmada' : 'pendiente');
+    await assertEstadoYAgenda(employee, personal, duration <= 180 ? 'confirmada' : 'pendiente');
   });
 
   test(`el publico reserva ${duration} minutos dentro de los limites`, async () => {
@@ -758,7 +784,12 @@ for (const duration of [30, 60, 90, 120, 150, 180, 210, 240, 300, 360, 420, 480,
       duration,
     });
     await assertSucceeds(bookingBatch(publicDb, publica).commit());
-    assert.equal(publica.body.estado, duration <= 180 ? 'confirmada' : 'pendiente');
+    await assertEstadoYAgenda(
+      publicDb,
+      publica,
+      duration <= 180 ? 'confirmada' : 'pendiente',
+      verified(ADMIN).firestore(),
+    );
   });
 }
 
@@ -867,6 +898,508 @@ test('admin, empleado y publico compitiendo por el mismo slot dejan exactamente 
   assert.equal((await getDoc(agendaRef(admin, contenders[0][1]))).exists(), true);
 });
 
+// Lote con una reserva y una agenda que declara minutos arbitrarios: sirve para
+// atacar la acoplamiento sin pasar por bookingBatch.
+function ocuparBatch(db, booking, minutos, {
+  incluirAgenda = true,
+  incluirPublico = true,
+  reservaId = booking.id,
+} = {}) {
+  const batch = writeBatch(db);
+  batch.set(booking.ref, booking.body);
+  if (incluirAgenda) {
+    batch.set(agendaRef(db, booking), {
+      ocupados: Object.fromEntries(minutos.map(minuto => [minuto, true])),
+      ultimaOperacion: {
+        reservaId,
+        coleccion: booking.collectionName,
+        tipo: 'ocupar',
+        minutos,
+      },
+    }, { merge: true });
+  }
+  if (incluirPublico) {
+    batch.set(publicSlotRef(db, booking), {
+      ocupados: Object.fromEntries(minutos.map(minuto => [minuto, true])),
+    }, { merge: true });
+  }
+  return batch;
+}
+
+function transicionBatch(db, booking, actor, extra = {}) {
+  const batch = writeBatch(db);
+  batch.update(booking.ref, {
+    estado: 'cancelada',
+    atendidoPor: actor,
+    updatedAt: Timestamp.now(),
+    version: booking.body.version + 1,
+    ...extra,
+  });
+  const minutos = operationalMinutes(booking);
+  batch.set(agendaRef(db, booking), {
+    ocupados: Object.fromEntries(minutos.map(minuto => [minuto, deleteField()])),
+    ultimaOperacion: {
+      reservaId: booking.id,
+      coleccion: booking.collectionName,
+      tipo: 'liberar',
+      minutos,
+    },
+  }, { merge: true });
+  batch.set(publicSlotRef(db, booking), {
+    ocupados: Object.fromEntries(minutos.map(minuto => [minuto, deleteField()])),
+  }, { merge: true });
+  return batch;
+}
+
+test('dos reservas solapadas se rechazan en lotes separados', async () => {
+  await seedApplication();
+  const db = verified(EMPLOYEE).firestore();
+
+  const ancla = makeBooking(db, { id: 'solape-ancla', uid: EMPLOYEE, minute: 600, duration: 60 });
+  await assertSucceeds(bookingBatch(db, ancla).commit());
+
+  // Solapamiento total: identico inicio y duracion.
+  const total = makeBooking(db, { id: 'solape-total', uid: EMPLOYEE, minute: 600, duration: 60 });
+  await assertFails(bookingBatch(db, total).commit());
+
+  // Solapamiento parcial por el final: empieza dentro y termina fuera.
+  const parcialFinal = makeBooking(db, { id: 'solape-parcial-final', uid: EMPLOYEE, minute: 630, duration: 60 });
+  await assertFails(bookingBatch(db, parcialFinal).commit());
+
+  // Solapamiento parcial por el inicio: termina dentro de la ancla.
+  const parcialInicio = makeBooking(db, { id: 'solape-parcial-inicio', uid: EMPLOYEE, minute: 570, duration: 60 });
+  await assertFails(bookingBatch(db, parcialInicio).commit());
+
+  // Contenido exacto, un minuto menos: sigue siendo solapamiento.
+  const casi = makeBooking(db, { id: 'solape-casi', uid: EMPLOYEE, minute: 630, duration: 30 });
+  await assertFails(bookingBatch(db, casi).commit());
+
+  // Ninguna escritura llego al servidor y la agenda quedo intacta.
+  for (const id of ['solape-total', 'solape-parcial-final', 'solape-parcial-inicio', 'solape-casi']) {
+    assert.equal((await getDoc(doc(db, 'negocios', BUSINESS, 'reservas', id))).exists(), false, id);
+  }
+  const agenda = (await getDoc(agendaRef(db, ancla))).data();
+  assert.deepEqual(agenda.ocupados, { '600': true, '630': true });
+  assert.deepEqual((await getDoc(publicSlotRef(db, ancla))).data().ocupados, { '600': true, '630': true });
+  assert.equal(agenda.ultimaOperacion.reservaId, 'solape-ancla');
+});
+
+test('dos reservas solapadas se rechazan dentro de un mismo lote', async () => {
+  await seedApplication();
+  const db = verified(EMPLOYEE).firestore();
+
+  const ancla = makeBooking(db, { id: 'lote-ancla', uid: EMPLOYEE, minute: 600, duration: 60 });
+  await assertSucceeds(bookingBatch(db, ancla).commit());
+
+  // Mismo lote: la reserva entra junto a una agenda que pisa minutos ya
+  // ocupados. Todas las escrituras viajan en un solo commit.
+  const invasor = makeBooking(db, { id: 'lote-invasor', uid: EMPLOYEE, minute: 600, duration: 30 });
+  await assertFails(ocuparBatch(db, invasor, ['600']).commit());
+  assert.equal((await getDoc(invasor.ref)).exists(), false);
+
+  const invasorParcial = makeBooking(db, { id: 'lote-invasor-parcial', uid: EMPLOYEE, minute: 630, duration: 30 });
+  await assertFails(ocuparBatch(db, invasorParcial, ['630']).commit());
+  assert.equal((await getDoc(invasorParcial.ref)).exists(), false);
+
+  const agenda = (await getDoc(agendaRef(db, ancla))).data();
+  assert.deepEqual(agenda.ocupados, { '600': true, '630': true });
+  assert.equal(agenda.ultimaOperacion.reservaId, 'lote-ancla');
+});
+
+test('el SDK impide dos escrituras al mismo documento en un lote, no las reglas', async () => {
+  // Documenta el limite que impide expresar el solapamiento en un unico lote
+  // sobre la misma cancha: el rechazo es del cliente, no de firestore.rules.
+  await seedApplication();
+  const db = verified(EMPLOYEE).firestore();
+  const a = makeBooking(db, { id: 'sdk-a', uid: EMPLOYEE, minute: 600, duration: 30 });
+  const b = makeBooking(db, { id: 'sdk-b', uid: EMPLOYEE, minute: 630, duration: 30 });
+  const batch = writeBatch(db);
+  batch.set(a.ref, a.body);
+  batch.set(agendaRef(db, a), {
+    ocupados: { '600': true },
+    ultimaOperacion: { reservaId: a.id, coleccion: 'reservas', tipo: 'ocupar', minutos: ['600'] },
+  }, { merge: true });
+  batch.set(b.ref, b.body);
+  batch.set(agendaRef(db, b), {
+    ocupados: { '630': true },
+    ultimaOperacion: { reservaId: b.id, coleccion: 'reservas', tipo: 'ocupar', minutos: ['630'] },
+  }, { merge: true });
+  await assertFails(batch.commit());
+  assert.equal((await getDoc(a.ref)).exists(), false);
+  assert.equal((await getDoc(b.ref)).exists(), false);
+});
+
+test('una reserva no puede ocupar minutos fuera de los suyos', async () => {
+  await seedApplication();
+  const db = verified(EMPLOYEE).firestore();
+
+  // De mas: declara tres minutos para una reserva de 30.
+  const deMas = makeBooking(db, { id: 'fuera-de-mas', uid: EMPLOYEE, minute: 600, duration: 30 });
+  await assertFails(ocuparBatch(db, deMas, ['600', '630', '660']).commit());
+  assert.equal((await getDoc(deMas.ref)).exists(), false);
+
+  // De menos: reserva de 90 minutos y escribe solo el primero.
+  const deMenos = makeBooking(db, { id: 'fuera-de-menos', uid: EMPLOYEE, minute: 690, duration: 90 });
+  await assertFails(ocuparBatch(db, deMenos, ['690']).commit());
+  assert.equal((await getDoc(deMenos.ref)).exists(), false);
+
+  // Mismo tamano, minuto equivocado. Con la agenda ya poblada, el tamano no
+  // delata el cambio: solo lo detiene la igualdad con los minutos de la reserva.
+  const previa = makeBooking(db, { id: 'fuera-previa', uid: EMPLOYEE, minute: 780, duration: 120 });
+  await assertSucceeds(bookingBatch(db, previa).commit());
+  const mismaCantidad = makeBooking(db, { id: 'fuera-misma-cantidad', uid: EMPLOYEE, minute: 990, duration: 30 });
+  await assertFails(ocuparBatch(db, mismaCantidad, ['1020']).commit());
+  assert.equal((await getDoc(mismaCantidad.ref)).exists(), false);
+
+  // Con otra reserva legitima en el mismo dia tampoco puede robarle minutos.
+  const legitima = makeBooking(db, { id: 'fuera-legitima', uid: EMPLOYEE, minute: 1050, duration: 60 });
+  await assertSucceeds(bookingBatch(db, legitima).commit());
+  const ladrona = makeBooking(db, { id: 'fuera-ladrona', uid: EMPLOYEE, minute: 1140, duration: 30 });
+  await assertFails(ocuparBatch(db, ladrona, ['1080']).commit());
+  assert.equal((await getDoc(ladrona.ref)).exists(), false);
+
+  // Todo lo legitimo quedo como estaba. Las dos reservas comparten la agenda del
+  // dia, asi que el mapa es la union de sus minutos y nada mas.
+  const esperadoDelDia = {
+    '780': true, '810': true, '840': true, '870': true,
+    '1050': true, '1080': true,
+  };
+  assert.deepEqual((await getDoc(agendaRef(db, previa))).data().ocupados, esperadoDelDia);
+  assert.deepEqual((await getDoc(publicSlotRef(db, previa))).data().ocupados, esperadoDelDia);
+  for (const prohibido of ['660', '690', '990', '1020', '1140', '1170']) {
+    assert.equal((await getDoc(agendaRef(db, previa))).data().ocupados[prohibido], undefined, prohibido);
+  }
+});
+
+test('escribir la agenda privada sin actualizar el espejo publico se rechaza', async () => {
+  await seedApplication();
+  const db = verified(EMPLOYEE).firestore();
+
+  // Alta: reserva y agenda privada correctas, pero el espejo no se escribe.
+  const sinEspejo = makeBooking(db, { id: 'espejo-sin-alta', uid: EMPLOYEE, minute: 600, duration: 60 });
+  await assertFails(ocuparBatch(db, sinEspejo, ['600', '630'], { incluirPublico: false }).commit());
+  assert.equal((await getDoc(sinEspejo.ref)).exists(), false);
+  assert.equal((await getDoc(agendaRef(db, sinEspejo))).exists(), false);
+  assert.equal((await getDoc(publicSlotRef(db, sinEspejo))).exists(), false);
+
+  // Aprobacion: la reserva larga pasa a confirmada y solo se toca la agenda.
+  const pendiente = makeBooking(db, { id: 'espejo-pendiente', uid: EMPLOYEE, minute: 600, duration: 240 });
+  await assertSucceeds(bookingBatch(db, pendiente).commit());
+  const aprobacion = writeBatch(db);
+  aprobacion.update(pendiente.ref, {
+    estado: 'confirmada',
+    atendidoPor: EMPLOYEE,
+    updatedAt: Timestamp.now(),
+    version: 2,
+  });
+  const minutos = operationalMinutes(pendiente);
+  aprobacion.set(agendaRef(db, pendiente), {
+    ocupados: Object.fromEntries(minutos.map(minuto => [minuto, true])),
+    ultimaOperacion: {
+      reservaId: pendiente.id,
+      coleccion: 'reservas',
+      tipo: 'ocupar',
+      minutos,
+    },
+  }, { merge: true });
+  await assertFails(aprobacion.commit());
+  assert.equal((await getDoc(pendiente.ref)).data().estado, 'pendiente');
+  assert.equal((await getDoc(agendaRef(db, pendiente))).exists(), false);
+  assert.equal((await getDoc(publicSlotRef(db, pendiente))).exists(), false);
+
+  // Y el camino inverso: espejo sin agenda privada.
+  const soloEspejo = makeBooking(db, { id: 'espejo-solo-publico', uid: EMPLOYEE, minute: 600, duration: 30 });
+  await assertFails(ocuparBatch(db, soloEspejo, ['600'], { incluirAgenda: false }).commit());
+  assert.equal((await getDoc(soloEspejo.ref)).exists(), false);
+  assert.equal((await getDoc(publicSlotRef(db, soloEspejo))).exists(), false);
+});
+
+test('una transicion de estado no puede modificar otros campos', async () => {
+  await seedApplication();
+  const db = verified(EMPLOYEE).firestore();
+  const ancla = makeBooking(db, { id: 'transicion-ancla', uid: EMPLOYEE, minute: 600, duration: 60 });
+  await assertSucceeds(bookingBatch(db, ancla).commit());
+
+  const intrusos = {
+    clienteNombre: 'Nombre inyectado',
+    clienteId: 'cliente-inventado',
+    telefono: '+51999999999',
+    minutos: ['600', '630', '660'],
+    duracion: 90,
+    montoCentimos: 50000,
+    adelantoCentimos: 25000,
+    saldoCentimos: 50000,
+    metodoPago: 'efectivo',
+    historialPagos: [{ montoCentimos: 25000, metodo: 'efectivo' }],
+    promocionId: 'promo-falsa',
+    origen: 'publico',
+    solicitanteUid: ANON_B,
+    dia: '2099-01-01',
+    canchaId: 'la-24',
+    negocioId: 'otro-negocio',
+    schemaVersion: 3,
+  };
+  let minuto = 660;
+  for (const [campo, valor] of Object.entries(intrusos)) {
+    const booking = makeBooking(db, {
+      id: `transicion-${campo}`,
+      uid: EMPLOYEE,
+      minute: minuto,
+      duration: 30,
+    });
+    minuto += 30;
+    await assertSucceeds(bookingBatch(db, booking).commit());
+    const antesDelIntento = (await getDoc(booking.ref)).data();
+    await assertFails(transicionBatch(db, booking, EMPLOYEE, { [campo]: valor }).commit());
+    // El documento entero debe seguir igual: ni el estado ni el campo intruso.
+    assert.deepEqual((await getDoc(booking.ref)).data(), antesDelIntento, campo);
+  }
+
+  // Sin campos intrusos la misma transicion si prospera: el rechazo venia del
+  // campo, no de la forma del lote. Empieza donde el bucle anterior termino.
+  const limpia = makeBooking(db, { id: 'transicion-limpia', uid: EMPLOYEE, minute: 1200, duration: 30 });
+  await assertSucceeds(bookingBatch(db, limpia).commit());
+  await assertSucceeds(transicionBatch(db, limpia, EMPLOYEE).commit());
+  const cancelada = (await getDoc(limpia.ref)).data();
+  assert.equal(cancelada.estado, 'cancelada');
+  assert.equal(cancelada.version, 2);
+  assert.equal(cancelada.atendidoPor, EMPLOYEE);
+  assert.equal((await getDoc(agendaRef(db, limpia))).data().ocupados['1200'], undefined);
+  assert.equal((await getDoc(publicSlotRef(db, limpia))).data().ocupados['1200'], undefined);
+});
+
+test('una transicion tiene que avanzar exactamente una version y a su nombre', async () => {
+  await seedApplication();
+  const db = verified(EMPLOYEE).firestore();
+  const booking = makeBooking(db, { id: 'version-ancla', uid: EMPLOYEE, minute: 600, duration: 30 });
+  await assertSucceeds(bookingBatch(db, booking).commit());
+  const inicial = (await getDoc(booking.ref)).data();
+  assert.equal(inicial.version, 1);
+
+  // Repetir la version actual.
+  await assertFails(transicionBatch(db, booking, EMPLOYEE, { version: 1 }).commit());
+  // Saltarse una version.
+  await assertFails(transicionBatch(db, booking, EMPLOYEE, { version: 3 }).commit());
+  // Firmar la transicion en nombre de otro.
+  await assertFails(transicionBatch(db, booking, EMPLOYEE, { atendidoPor: ADMIN }).commit());
+  // Retroceder la version.
+  await assertFails(transicionBatch(db, booking, EMPLOYEE, { version: 0 }).commit());
+
+  assert.deepEqual((await getDoc(booking.ref)).data(), inicial);
+
+  // El avance correcto si prospera.
+  await assertSucceeds(transicionBatch(db, booking, EMPLOYEE).commit());
+  const final = (await getDoc(booking.ref)).data();
+  assert.equal(final.version, 2);
+  assert.equal(final.estado, 'cancelada');
+  assert.equal(final.atendidoPor, EMPLOYEE);
+});
+
+test('el publico no puede declararse confirmada una reserva larga', async () => {
+  await seedApplication();
+  const publicDb = anonymous(ANON_A).firestore();
+  const lector = verified(ADMIN).firestore();
+  const leer = (booking) => getDoc(doc(lector, 'negocios', BUSINESS, 'reservas', booking.id));
+
+  // Cuatro horas auto-confirmadas y sin agenda: la via para saltarse la
+  // aprobacion y ocupar sin aparecer en el espejo. Solo se escribe la
+  // reserva, asi que la unica defensa posible es la propia regla de alta.
+  const mentirosa = makeBooking(publicDb, {
+    id: 'r_mentirosa_larga',
+    uid: ANON_A,
+    publicRequest: true,
+    duration: 240,
+    patch: { estado: 'confirmada' },
+  });
+  const sola = writeBatch(publicDb);
+  sola.set(mentirosa.ref, mentirosa.body);
+  await assertFails(sola.commit());
+  assert.equal((await leer(mentirosa)).exists(), false);
+  assert.equal((await getDoc(agendaRef(lector, mentirosa))).exists(), false);
+  assert.equal((await getDoc(publicSlotRef(lector, mentirosa))).exists(), false);
+
+  // La misma reserva escribiendo agenda y espejo tampoco prospera.
+  const conAgenda = makeBooking(publicDb, {
+    id: 'r_mentirosa_con_agenda',
+    uid: ANON_A,
+    publicRequest: true,
+    court: 'la-23',
+    duration: 240,
+    patch: { estado: 'confirmada' },
+  });
+  await assertFails(bookingBatch(publicDb, conAgenda).commit());
+  assert.equal((await leer(conAgenda)).exists(), false);
+
+  // Y al reves: 30 minutos no pueden quedar esperando aprobacion.
+  const corta = makeBooking(publicDb, {
+    id: 'r_corta_pendiente',
+    uid: ANON_A,
+    publicRequest: true,
+    court: 'la-24',
+    duration: 30,
+    patch: { estado: 'pendiente' },
+  });
+  const solaCorta = writeBatch(publicDb);
+  solaCorta.set(corta.ref, corta.body);
+  await assertFails(solaCorta.commit());
+  assert.equal((await leer(corta)).exists(), false);
+
+  // Justo en el borde: 180 minutos tampoco se auto-confirman.
+  const borde = makeBooking(publicDb, {
+    id: 'r_borde_confirmada',
+    uid: ANON_A,
+    publicRequest: true,
+    duration: 180,
+    patch: { estado: 'confirmada' },
+  });
+  const soloBorde = writeBatch(publicDb);
+  soloBorde.set(borde.ref, borde.body);
+  await assertFails(soloBorde.commit());
+  assert.equal((await leer(borde)).exists(), false);
+});
+
+test('una reserva puede empezar en el minuto exacto de apertura y acabar en el de cierre', async () => {
+  await seedApplication();
+  const admin = verified(ADMIN).firestore();
+  // Horario de un solo dia: cierre > apertura, asi que manda la primera rama
+  // de cabe, que es la que las otras pruebas no tocaban.
+  await environment.withSecurityRulesDisabled(async (context) => {
+    await updateDoc(doc(context.firestore(), 'negocios', BUSINESS), {
+      aperturaMinuto: 420,
+      cierreMinuto: 1080,
+      duracionTurnoMinutos: 30,
+    });
+  });
+
+  const apertura = makeBooking(admin, {
+    id: 'borde-apertura-exacta', uid: ADMIN, minute: 420, duration: 30,
+  });
+  await assertSucceeds(bookingBatch(admin, apertura).commit());
+  assert.deepEqual(operationalMinutes(apertura), ['420']);
+
+  const cierre = makeBooking(admin, {
+    id: 'borde-cierre-exacto', uid: ADMIN, court: 'la-23', minute: 1050, duration: 30,
+  });
+  await assertSucceeds(bookingBatch(admin, cierre).commit());
+  assert.deepEqual(operationalMinutes(cierre), ['1050']);
+
+  // Un minuto antes de abrir y un minuto despues de cerrar.
+  const antes = makeBooking(admin, {
+    id: 'borde-apertura-antes', uid: ADMIN, court: 'la-24', minute: 390, duration: 30,
+  });
+  await assertFails(bookingBatch(admin, antes).commit());
+
+  const despues = makeBooking(admin, {
+    id: 'borde-cierre-despues', uid: ADMIN, minute: 1080, duration: 30,
+  });
+  await assertFails(bookingBatch(admin, despues).commit());
+});
+
+test('el horario del negocio solo admite medias horas dentro del dia', async () => {
+  await seedApplication();
+  const admin = verified(ADMIN).firestore();
+  const negocio = doc(admin, 'negocios', BUSINESS);
+  // El horario solo cambia si se proyecta a la web en el mismo lote.
+  const cambiar = (horario) => {
+    const batch = writeBatch(admin);
+    batch.update(negocio, horario);
+    batch.set(doc(admin, 'negocios_publicos', BUSINESS), {
+      negocioId: BUSINESS,
+      slug: 'grass-sintetico',
+      nombre: 'Grass Sintetico',
+      descripcion: 'Informacion publica',
+      galeria: [],
+      ...horario,
+    });
+    return batch;
+  };
+
+  const invalidos = [
+    { aperturaMinuto: 435, cierreMinuto: 60, duracionTurnoMinutos: 30 },
+    { aperturaMinuto: 405, cierreMinuto: 60, duracionTurnoMinutos: 30 },
+    { aperturaMinuto: 420, cierreMinuto: 1005, duracionTurnoMinutos: 30 },
+    { aperturaMinuto: 420, cierreMinuto: 1500, duracionTurnoMinutos: 30 },
+    { aperturaMinuto: 1440, cierreMinuto: 60, duracionTurnoMinutos: 30 },
+    { aperturaMinuto: -30, cierreMinuto: 60, duracionTurnoMinutos: 30 },
+    { aperturaMinuto: 420, cierreMinuto: 60, duracionTurnoMinutos: 45 },
+    { aperturaMinuto: 420, cierreMinuto: 60, duracionTurnoMinutos: 270 },
+    { aperturaMinuto: 420, cierreMinuto: 420, duracionTurnoMinutos: 30 },
+  ];
+  for (const horario of invalidos) {
+    await assertFails(cambiar(horario).commit(), JSON.stringify(horario));
+  }
+
+  const intacto = (await getDoc(negocio)).data();
+  assert.equal(intacto.aperturaMinuto, 420);
+  assert.equal(intacto.cierreMinuto, 60);
+  assert.equal(intacto.duracionTurnoMinutos, 30);
+
+  // Medias horas validas si se aceptan.
+  await assertSucceeds(cambiar({ aperturaMinuto: 450, cierreMinuto: 1080, duracionTurnoMinutos: 60 }).commit());
+  const nuevo = (await getDoc(negocio)).data();
+  assert.equal(nuevo.aperturaMinuto, 450);
+  assert.equal(nuevo.cierreMinuto, 1080);
+  assert.equal(nuevo.duracionTurnoMinutos, 60);
+});
+
+test('el dia mas lleno y la reserva mas larga caben sin rozar los limites', async () => {
+  await seedApplication();
+  const db = verified(EMPLOYEE).firestore();
+  const day = futureLocalDay();
+
+  // 16 minutos previos: 420..870, el mayor preexistente posible.
+  const previos = Array.from({ length: 16 }, (_, index) => String(420 + index * 30));
+  await environment.withSecurityRulesDisabled(async (context) => {
+    const crudo = context.firestore();
+    const marcador = makeBooking(crudo, { id: 'previa', uid: EMPLOYEE, minute: 420, duration: 30 });
+    await setDoc(agendaRef(crudo, marcador), {
+      ocupados: Object.fromEntries(previos.map(minuto => [minuto, true])),
+      ultimaOperacion: { reservaId: 'previa', coleccion: 'reservas', tipo: 'ocupar', minutos: previos },
+    });
+    await setDoc(publicSlotRef(crudo, marcador), {
+      ocupados: Object.fromEntries(previos.map(minuto => [minuto, true])),
+    });
+  });
+
+  // 600 minutos es la duracion maxima admitida y queda pendiente, asi que la
+  // ocupacion de 20 minutos solo existe tras aprobarla. Esa es la operacion
+  // mas grande que las reglas tienen que evaluar.
+  const maxima = makeBooking(db, { id: 'dia-lleno', uid: EMPLOYEE, minute: 900, duration: 600 });
+  assert.equal(operationalMinutes(maxima).length, 20);
+  const esperadosPrevios = Object.fromEntries(previos.map(minuto => [minuto, true]));
+  await assertSucceeds(bookingBatch(db, maxima).commit());
+  const pendiente = (await getDoc(doc(db, 'negocios', BUSINESS, 'reservas', maxima.id))).data();
+  assert.equal(pendiente.estado, 'pendiente');
+  assert.equal(pendiente.version, 1);
+  assert.deepEqual(pendiente.minutos, operationalMinutes(maxima));
+  const antesDeAprobar = (await getDoc(agendaRef(db, maxima))).data();
+  assert.deepEqual(antesDeAprobar.ocupados, esperadosPrevios);
+  assert.deepEqual((await getDoc(publicSlotRef(db, maxima))).data().ocupados, esperadosPrevios);
+
+  await assertSucceeds(approvalBatch(db, maxima, EMPLOYEE).commit());
+  const aprobada = (await getDoc(doc(db, 'negocios', BUSINESS, 'reservas', maxima.id))).data();
+  assert.equal(aprobada.estado, 'confirmada');
+  assert.equal(aprobada.version, 2);
+
+  const esperados = [...previos, ...operationalMinutes(maxima)];
+  assert.equal(esperados.length, 36);
+  const agenda = (await getDoc(agendaRef(db, maxima))).data();
+  const publica = (await getDoc(publicSlotRef(db, maxima))).data();
+  assert.equal(Object.keys(agenda.ocupados).length, 36);
+  assert.deepEqual(agenda.ocupados, publica.ocupados);
+  for (const minuto of esperados) {
+    assert.equal(agenda.ocupados[minuto], true, minuto);
+  }
+  assert.deepEqual(agenda.ultimaOperacion.minutos, operationalMinutes(maxima));
+
+  // Con el dia completo, cualquier minuto posterior ya esta ocupado: el tope
+  // de 36 entradas coincide con los 36 mediosfos del dia operativo.
+  const rebose = makeBooking(db, { id: 'dia-rebosado', uid: EMPLOYEE, minute: 900, duration: 30 });
+  await assertFails(bookingBatch(db, rebose).commit());
+  assert.equal((await getDoc(rebose.ref)).exists(), false);
+  assert.equal((await getDoc(agendaRef(db, maxima))).data().ocupados['900'], true);
+});
+
 test('dos reservas adyacentes de 30 minutos pueden coexistir', async () => {
   await seedApplication();
   const db = verified(EMPLOYEE).firestore();
@@ -884,10 +1417,31 @@ test('una solicitud de cuatro horas queda pendiente y no ocupa agenda', async ()
   const db = verified(ADMIN).firestore();
   const booking = makeBooking(db, { id: 'cuatro-horas', uid: ADMIN, minute: 600, duration: 240 });
   assert.equal(booking.slots.length, 8);
-  assert.equal(booking.body.estado, 'pendiente');
   await assertSucceeds(bookingBatch(db, booking).commit());
+  await assertEstadoYAgenda(db, booking, 'pendiente');
+  const stored = (await getDoc(booking.ref)).data();
+  assert.deepEqual(stored.minutos, ['600', '630', '660', '690', '720', '750', '780', '810']);
+  assert.equal(stored.duracion, 240);
+  assert.equal(stored.atendidoPor, '');
   assert.equal((await getDoc(agendaRef(db, booking))).exists(), false);
   assert.equal((await getDoc(publicSlotRef(db, booking))).exists(), false);
+});
+
+test('el limite de tres horas separa confirmado y pendiente en el servidor', async () => {
+  await seedApplication();
+  const db = verified(ADMIN).firestore();
+  const corta = makeBooking(db, { id: 'limite-corta', uid: ADMIN, court: 'la-23', minute: 600, duration: 180 });
+  const larga = makeBooking(db, { id: 'limite-larga', uid: ADMIN, court: 'la-24', minute: 600, duration: 210 });
+  await assertSucceeds(bookingBatch(db, corta).commit());
+  await assertSucceeds(bookingBatch(db, larga).commit());
+  const cortaStored = await assertEstadoYAgenda(db, corta, 'confirmada');
+  const largaStored = await assertEstadoYAgenda(db, larga, 'pendiente');
+  assert.equal(cortaStored.minutos.length, 6);
+  assert.equal(largaStored.minutos.length, 7);
+  assert.equal(cortaStored.atendidoPor, ADMIN);
+  assert.equal(largaStored.atendidoPor, '');
+  assert.equal((await getDoc(agendaRef(db, larga))).exists(), false);
+  assert.equal((await getDoc(publicSlotRef(db, larga))).exists(), false);
 });
 
 test('una reserva que cruza medianoche usa el dia y minuto canonicos siguientes', async () => {
@@ -1122,6 +1676,95 @@ test('cancelar un bloqueo libera sus slots y deja reservar el horario', async ()
     environment.unauthenticatedContext().firestore(),
     'negocios', BUSINESS, 'bloqueos', block.id,
   )));
+});
+
+test('el espejo publico exige una reserva y una agenda privada que lo respalden', async () => {
+  await seedApplication();
+  const employee = verified(EMPLOYEE).firestore();
+  const anon = anonymous(ANON_A).firestore();
+  const day = futureLocalDay();
+  const court = COURT;
+  const huecos = [];
+  const debeFallar = async (etiqueta, accion) => {
+    try {
+      await accion();
+      huecos.push(`PERMITIDO (debia denegar): ${etiqueta}`);
+    } catch {
+      // Denegado por las reglas, que es lo esperado.
+    }
+  };
+  const debePasar = async (etiqueta, accion) => {
+    try {
+      await accion();
+    } catch (error) {
+      huecos.push(`DENEGADO (debia pasar): ${etiqueta} -> ${String(error?.message ?? error).split('\n')[0]}`);
+    }
+  };
+
+  // 1. Escritura de un solo documento: solo el espejo publico, con la forma
+  //    correcta {ocupados:{minuto:true}} y sin nada mas en la transaccion.
+  const suelta = doc(anon, 'agenda_publica', BUSINESS, 'canchas', court, 'dias', day);
+  await debeFallar('anonimo escribe {ocupados} sin reserva ni agenda', () => setDoc(suelta, { ocupados: { '900': true } }));
+  await debeFallar('anonimo escribe {ocupados} con reservaId inventada', () => setDoc(suelta, { ocupados: { '900': true }, reservaId: 'inventada' }));
+  await debeFallar('empleado fabrica ocupacion sin agenda privada', () => setDoc(
+    doc(employee, 'agenda_publica', BUSINESS, 'canchas', court, 'dias', day),
+    { ocupados: { '900': true } },
+  ));
+  await debeFallar('anonimo libera minutos que no son suyos', () => updateDoc(suelta, { ocupados: {} }));
+
+  // 2. Con una reserva real y confirmada, el espejo no se puede alterar: debe
+  //    seguir siendo identico a la agenda privada.
+  const real = makeBooking(employee, {
+    id: 'espejo-real', uid: EMPLOYEE, day, minute: 1020, duration: 60,
+  });
+  await debePasar('reserva confirmada de referencia', () => bookingBatch(employee, real).commit());
+  const espejoReal = publicSlotRef(employee, real);
+  const ocupado = { '1020': true, '1050': true };
+  await debeFallar('espejo no puede anadir un minuto libre', () => updateDoc(espejoReal, { ocupados: { ...ocupado, '1080': true } }));
+  await debeFallar('espejo no puede vaciar la ocupacion', () => updateDoc(espejoReal, { ocupados: {} }));
+  await debeFallar('espejo no puede marcar minutos en false', () => updateDoc(espejoReal, { ocupados: { '1020': false, '1050': true } }));
+  await debeFallar('espejo no puede reescribirse con otro mapa', () => setDoc(espejoReal, { ocupados: { '1020': true } }));
+  await debeFallar('espejo no puede añadir campos privados', () => updateDoc(espejoReal, { ocupado: true }));
+  await debeFallar('espejo no se puede borrar', () => deleteDoc(espejoReal));
+  // DEBILIDAD RESIDUAL VERIFICADA, no un agujero de integridad: el espejo si
+  // admite una reescritura IDENTICA. Al no cambiar nada, los dos diffs quedan
+  // vacios y la regla los da por iguales. No fabrica ocupacion, no altera estado
+  // y no filtra nada: ese documento ya es publico para quien escribe. Queda
+  // constancia ejecutable en vez de ocultarlo.
+  await debePasar('espejo admite reescritura identica (no-op sin efecto)', () => setDoc(espejoReal, { ocupados: ocupado }));
+  assert.deepEqual((await getDoc(espejoReal)).data(), { ocupados: ocupado });
+
+  // 3. Minuto extra: la agenda no puede ocupar minutos que la reserva no cubre.
+  const extra = makeBooking(employee, {
+    id: 'minuto-extra', uid: EMPLOYEE, day, minute: 1080, duration: 30,
+  });
+  const batchExtra = writeBatch(employee);
+  batchExtra.set(extra.ref, extra.body);
+  batchExtra.set(agendaRef(employee, extra), {
+    ocupados: { '1080': true, '1110': true },
+    ultimaOperacion: {
+      reservaId: extra.id,
+      coleccion: extra.collectionName,
+      tipo: 'ocupar',
+      minutos: ['1080'],
+    },
+  });
+  batchExtra.set(publicSlotRef(employee, extra), { ocupados: { '1080': true, '1110': true } });
+  await debeFallar('la agenda no ocupa un minuto que la reserva no cubre', () => batchExtra.commit());
+
+  // 4. Hueco: la agenda no puede omitir un minuto que la reserva si cubre.
+  const hueco = makeBooking(employee, {
+    id: 'minuto-hueco', uid: EMPLOYEE, day, minute: 1140, duration: 60,
+  });
+  await debeFallar('la agenda no puede omitir un minuto de la reserva', () => bookingBatch(employee, hueco, [0]).commit());
+
+  // 5. Cancelacion indebida: ni el publico ni un tercero pueden liberar.
+  await debeFallar('anonimo cancela una reserva ajena', () => cancellationBatch(anon, real, ANON_A).commit());
+  const intruso = verified(NO_RESERVATIONS).firestore();
+  await debeFallar('empleado sin permiso cancela', () => cancellationBatch(intruso, real, NO_RESERVATIONS).commit());
+  assert.deepEqual((await getDoc(espejoReal)).data(), { ocupados: ocupado });
+
+  assert.deepEqual(huecos, []);
 });
 
 let failures = 0;

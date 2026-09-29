@@ -156,3 +156,22 @@ Para desactivar el bloqueo, en este orden:
 ## Corte de datos existente
 
 El esquema canonico es `schemaVersion: 5`. Antes de un despliegue real se debe hacer una operacion separada y revisada para inventariar y migrar reservas antiguas y sus agendas por franja, detectar conflictos y respaldar datos. Este trabajo no lee ni modifica datos de produccion.
+
+### Por que 5 y no 3
+
+La rama parte de `schemaVersion: 3`, que guardaba cada reserva con una lista `dias` de segmentos y un documento por franja en `slots`. Ese modelo obligaba a enumerar todas las franjas del turno dentro de cada documento y multiplicaba las escrituras, y su agenda publica era un documento por franja. El salto a 5 sustituye eso por una agenda diaria unica por cancha y dia operativo, con un mapa `ocupados` de minuto a booleano, y por un unico documento publico que se deriva de ella.
+
+El 4 nunca se versiono: no existe ninguna regla, prueba, script ni documento en el repositorio que lo defina, y el unico estado versionado antes de este trabajo era 3. El trabajo actual se etiqueta 5 por ser el primer estado coherente y verificable, no por haber superado un 4 existente. Queda como decision pendiente renumerar a 4 o confirmar el 5, porque renumerar obliga a migrar cualquier dato ya escrito con la marca 5.
+
+### Limites de tamano de un lote
+
+La operacion mas grande que las reglas admiten es la aprobacion de una reserva de 600 minutos: son 20 minutos operados sobre un dia que ya puede llevar 16 ocupados, hasta el tope de 36 entradas que fija `d.ocupados.size() <= 36`. Ese tope coincide con los 36 mediosfos del dia operativo (420 a 1470), de modo que no se puede superar sin salirse del dia. En el peor caso estatico cada documento evaluado encadena como mucho 12 accesos (`puedeResolverCancha` 10 y `cambioOcupaAgenda` 2 al transicionar la reserva; `agendaDiaValida` 7 y `proyeccionCambiaIgual` 5 al escribir la agenda; `agendaCambiaIgual` 5 al escribir el espejo), y el cortocircuito los reduce en la practica. La suite incluye ese caso como prueba y el emulador no reporta ni `maximum of 1000 expressions` ni limites de accesos.
+
+### Pagos en cero, de punta a punta
+
+Hasta que exista un backend de pagos, los importes no se gestionan: `montoCentimos`, `adelantoCentimos`, `saldoCentimos` y `historialPagos` viajan siempre en cero y vacio desde el cliente, y las reglas los exigen asi de forma explicita. El alta publica rechazada con `montoCentimos` o `adelantoCentimos` distintos de cero, igual que un `metodoPago` no vacio, y la UI no muestra ni reclama pagos. La consecuencia practica es que no existe ninguna via — ni publica ni de panel — para registrar un adelanto o un saldo: cuando se implemente el backend habra que anadir la regla que los permita y retirar esta restriccion de forma conjunta.
+
+### Debilidad conocida
+
+El documento publico admite una reescritura identica: si el mapa enviado coincide byte a byte con el de la agenda privada, los dos diffs quedan vacios y la regla los da por iguales. No fabrica ocupacion, no altera estado y no filtra informacion, porque ese documento ya es legible por cualquiera. Se deja constancia en vez de ocultarlo.
+
