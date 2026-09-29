@@ -26,6 +26,17 @@ const ACTIVO = 'empleado-activo-02';
 const INACTIVO = 'empleado-inactivo-03';
 const AJENO = 'cuenta-ajena-04';
 
+// El emulador es compartido entre suites y con ejecuciones anteriores. El ACL
+// que reconcilia el script se construye desde TODOS los empleados activos de
+// Firestore, asi que un empleado que dejo otra suite haria fallar la asercion
+// final. Esta suite declara su propio punto de partida, igual que las demas
+// limpian antes de sembrar.
+await firestore.recursiveDelete(firestore.collection('negocios'));
+await firestore.doc('sistema/grass').delete();
+// La cuenta administradora tambien es estado previo: crear un UID que ya existe
+// aborta la suite, asi que se rehace siempre desde cero.
+await auth.deleteUser(ADMIN).catch(() => {});
+
 await auth.createUser({
   uid: ADMIN,
   email: 'admin-provisionamiento@local.test',
