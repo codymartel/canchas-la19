@@ -6,10 +6,33 @@ const List<String> sedesIds = ['la-19', 'la-23', 'la-24'];
 const List<String> estadosReserva = [
   'pendiente',
   'confirmada',
+  'rechazada',
   'cancelada',
   'no_asistio',
 ];
 const List<int> duracionesPermitidas = [30, 60, 90, 120, 150, 180, 210, 240];
+const List<int> duracionesReserva = [
+  30,
+  60,
+  90,
+  120,
+  150,
+  180,
+  210,
+  240,
+  270,
+  300,
+  330,
+  360,
+  390,
+  420,
+  450,
+  480,
+  510,
+  540,
+  570,
+  600,
+];
 const List<String> permisosClave = [
   'agenda',
   'reservas',
@@ -21,8 +44,12 @@ bool esSede(String? valor) => valor != null && sedesIds.contains(valor);
 bool esEstadoReserva(String? valor) =>
     valor != null && estadosReserva.contains(valor);
 bool esDuracionValida(int minutos) => duracionesPermitidas.contains(minutos);
+bool esDuracionReservaValida(int minutos) =>
+    duracionesReserva.contains(minutos);
 bool esFranjaValida(int minuto) =>
     minuto >= 0 && minuto < 1440 && minuto % 30 == 0;
+bool esMinutoOperacionValido(int minuto) =>
+    minuto >= 420 && minuto < 1500 && minuto % 30 == 0;
 bool esCierreValido(int minuto) =>
     minuto > 0 && minuto <= 1440 && minuto % 30 == 0;
 bool esTarifaValida(Object? valor) =>
@@ -102,8 +129,7 @@ bool cabeEnHorario({
   if (cierre > apertura) {
     return minuto >= apertura && minuto + duracion <= cierre;
   }
-  return (minuto >= apertura && minuto + duracion <= cierre + 1440) ||
-      (minuto < cierre && minuto + duracion <= cierre);
+  return minuto >= apertura && minuto + duracion <= cierre + 1440;
 }
 
 /// Inicios validos, alineados al turno base y que caben en el horario global.
@@ -111,12 +137,18 @@ List<int> iniciosDeTurno({
   required HorarioNegocio horario,
   required int duracion,
 }) {
-  if (!esDuracionValida(duracion) || duracion % horario.duracionTurno != 0) {
+  if (!esDuracionReservaValida(duracion) ||
+      duracion % horario.duracionTurno != 0) {
     return const [];
   }
+  final limite = horario.cruzaMedianoche
+      ? horario.cierre + 1440
+      : horario.cierre;
   return [
-    for (var minuto = 0; minuto < 1440; minuto += 30)
+    for (var minuto = horario.apertura; minuto < limite; minuto += 30)
       if ((minuto - horario.apertura + 1440) % horario.duracionTurno == 0 &&
+          esMinutoOperacionValido(minuto) &&
+          minuto + duracion <= 1500 &&
           cabeEnHorario(
             apertura: horario.apertura,
             cierre: horario.cierre,
@@ -138,46 +170,20 @@ bool esDiaValido(String? dia) {
 DateTime inicioDe(String dia, int minuto) =>
     DateTime.parse('${dia}T00:00:00-05:00').add(Duration(minutes: minuto));
 
-class FranjaReserva {
-  final int year, month, day, minute;
-  final DateTime inicio;
-  const FranjaReserva({
-    required this.year,
-    required this.month,
-    required this.day,
-    required this.minute,
-    required this.inicio,
-  });
-
-  String get dia =>
-      '${year.toString().padLeft(4, '0')}-${month.toString().padLeft(2, '0')}-${day.toString().padLeft(2, '0')}';
+Map<String, String> jornadaDe(String dia) {
+  final partes = dia.split('-');
+  return {'year': partes[0], 'month': partes[1], 'day': partes[2]};
 }
 
-List<FranjaReserva> slotsDe({
-  required String dia,
-  required int minuto,
-  required int duracion,
-}) {
-  final partes = dia.split('-').map(int.parse).toList();
-  final fechaLocal = DateTime.utc(partes[0], partes[1], partes[2]);
-  final instante = inicioDe(dia, minuto);
-  return [
-    for (var i = 0; i < duracion ~/ 30; i++)
-      () {
-        final local = fechaLocal.add(Duration(minutes: minuto + i * 30));
-        return FranjaReserva(
-          year: local.year,
-          month: local.month,
-          day: local.day,
-          minute: local.hour * 60 + local.minute,
-          inicio: instante.add(Duration(minutes: i * 30)),
-        );
-      }(),
-  ];
-}
+List<String> minutosDe({required int minuto, required int duracion}) => [
+  for (var actual = minuto; actual < minuto + duracion; actual += 30) '$actual',
+];
 
-String rutaFranja(String negocio, String canchaId, FranjaReserva slot) =>
-    'negocios/$negocio/agenda/$canchaId/anios/${slot.year}/meses/${slot.month}/dias/${slot.day}/franjas/${slot.minute}';
+String rutaAgendaDia(String negocio, String canchaId, String dia) =>
+    'negocios/$negocio/agenda/$canchaId/dias/$dia';
+
+String rutaAgendaPublica(String negocio, String canchaId, String dia) =>
+    'agenda_publica/$negocio/canchas/$canchaId/dias/$dia';
 
 /// Identificador de la reserva.
 ///

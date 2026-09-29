@@ -33,15 +33,10 @@ class ReservaDialog extends StatefulWidget {
 }
 
 class _ReservaDialogState extends State<ReservaDialog> {
-  final nombre = TextEditingController(),
-      telefono = TextEditingController(),
-      monto = TextEditingController(text: '0'),
-      adelanto = TextEditingController(text: '0');
+  final nombre = TextEditingController(), telefono = TextEditingController();
   final requestId = nuevaOperacion();
-  String? canchaId, clienteId;
-  String metodo = 'efectivo';
+  String? canchaId;
   int minuto = 1080, duracion = 60;
-  int tarifaTurno = 0;
   int canchasNoReservables = 0;
   HorarioNegocio? horario;
   bool enviado = false;
@@ -56,7 +51,7 @@ class _ReservaDialogState extends State<ReservaDialog> {
       setState(() {
         horario = valor;
         if (duracion % valor.duracionTurno != 0 ||
-            !duracionesPermitidas.contains(duracion)) {
+            !duracionesReserva.contains(duracion)) {
           duracion = valor.duracionTurno;
         }
         // El horario puede cambiar en caliente (por ejemplo, el administrador
@@ -67,8 +62,6 @@ class _ReservaDialogState extends State<ReservaDialog> {
         if (disponibles.isNotEmpty && !disponibles.contains(minuto)) {
           minuto = disponibles.first;
         }
-        monto.text = (tarifaTurno * duracion / valor.duracionTurno / 100)
-            .toStringAsFixed(2);
       });
     });
   }
@@ -76,16 +69,33 @@ class _ReservaDialogState extends State<ReservaDialog> {
   int get duracionTurno => horario?.duracionTurno ?? 60;
 
   /// Solo multiplos del turno base que ademas admite el servidor.
-  List<int> get duraciones =>
-      duracionesPermitidas.where((d) => d % duracionTurno == 0).toList();
+  List<int> get duraciones => duracionesReserva
+      .where((d) => d % duracionTurno == 0 && (!widget.bloqueo || d <= 180))
+      .toList();
 
   /// Inicios que el servidor aceptaria: alineados al turno base y dentro del
   /// horario comun de las tres canchas.
   List<int> get inicios {
     final actual = horario;
     if (actual == null) return const [];
-    return iniciosDeTurno(horario: actual, duracion: duracion);
+    final ocupados =
+        widget.provider.ocupacionPorCancha[canchaId] ?? const <int>{};
+    return iniciosDeTurno(horario: actual, duracion: duracion)
+        .where(
+          (inicio) => minutosDe(
+            minuto: inicio,
+            duracion: duracion,
+          ).every((valor) => !ocupados.contains(int.parse(valor))),
+        )
+        .toList();
   }
+
+  int get minutoPresencia => minuto % 1440;
+  String get diaPresencia => minuto < 1440
+      ? widget.provider.dia
+      : DateTime.parse(
+          widget.provider.dia,
+        ).add(const Duration(days: 1)).toIso8601String().substring(0, 10);
 
   Future<void> publicar(String estado) async {
     final cancha = canchaId;
@@ -93,8 +103,8 @@ class _ReservaDialogState extends State<ReservaDialog> {
     await widget.presencia.publicar(
       sesionId: requestId,
       canchaId: cancha,
-      dia: widget.provider.dia,
-      minuto: minuto,
+      dia: diaPresencia,
+      minuto: minutoPresencia,
       nombre: widget.nombrePersonal,
       estado: estado,
     );
@@ -105,8 +115,6 @@ class _ReservaDialogState extends State<ReservaDialog> {
     _subHorario?.cancel();
     nombre.dispose();
     telefono.dispose();
-    monto.dispose();
-    adelanto.dispose();
     widget.presencia.limpiar(requestId);
     super.dispose();
   }
@@ -148,13 +156,10 @@ class _ReservaDialogState extends State<ReservaDialog> {
                 ? null
                 : (id) => setState(() {
                     canchaId = id;
-                    final c = canchas.firstWhere((c) => c.id == id);
-                    tarifaTurno = c.entero('tarifaTurnoCentimos');
                     duracion = duracionTurno;
                     if (!inicios.contains(minuto) && inicios.isNotEmpty) {
                       minuto = inicios.first;
                     }
-                    monto.text = (tarifaTurno / 100).toStringAsFixed(2);
                     publicar('preparando');
                   }),
           );
@@ -215,8 +220,6 @@ class _ReservaDialogState extends State<ReservaDialog> {
                 if (!inicios.contains(minuto) && inicios.isNotEmpty) {
                   minuto = inicios.first;
                 }
-                monto.text = (tarifaTurno * duracion / duracionTurno / 100)
-                    .toStringAsFixed(2);
                 publicar('preparando');
               }),
       ),
@@ -228,7 +231,6 @@ class _ReservaDialogState extends State<ReservaDialog> {
                   final c = await seleccionarCliente(context, widget.clientes);
                   if (c != null && mounted) {
                     setState(() {
-                      clienteId = c.id;
                       nombre.text = c.texto('nombre');
                       telefono.text = c.texto('telefono');
                     });
@@ -248,32 +250,14 @@ class _ReservaDialogState extends State<ReservaDialog> {
             ),
             if (!widget.bloqueo) ...[
               Campo('Teléfono', telefono, tipo: TextInputType.phone),
-              Campo(
-                'Monto final acordado (S/)',
-                monto,
-                tipo: TextInputType.number,
-              ),
-              Campo(
-                'Adelanto recibido (S/)',
-                adelanto,
-                tipo: TextInputType.number,
-              ),
             ],
           ],
         ),
       ),
-      if (!widget.bloqueo)
-        DropdownButton<String>(
-          value: metodo,
-          isExpanded: true,
-          items: [
-            'efectivo',
-            'yape',
-          ].map((m) => DropdownMenuItem(value: m, child: Text(m))).toList(),
-          onChanged: enviado ? null : (v) => setState(() => metodo = v!),
-        ),
-      const Text(
-        'El horario se asegura al guardar, no al abrir este formulario. Pendiente y confirmada ocupan todas sus franjas.',
+      Text(
+        duracion > 180
+            ? 'La solicitud quedara pendiente y no ocupara el horario hasta que el personal asignado la apruebe.'
+            : 'El horario se asegura de forma atomica al guardar.',
       ),
       if (enviado)
         const Text(
@@ -313,18 +297,14 @@ class _ReservaDialogState extends State<ReservaDialog> {
               'nombre': nombre.text,
               'motivo': nombre.text,
               'telefono': telefono.text,
-              'clienteId': clienteId,
-              'montoCentimos': widget.bloqueo ? 0 : centimos(monto.text),
-              'adelantoCentimos': widget.bloqueo ? 0 : centimos(adelanto.text),
-              'metodoPago': metodo,
               'bloqueo': widget.bloqueo,
             };
             setState(() => enviado = true);
             if (!await widget.presencia.publicar(
               sesionId: requestId,
               canchaId: canchaId!,
-              dia: widget.provider.dia,
-              minuto: minuto,
+              dia: diaPresencia,
+              minuto: minutoPresencia,
               nombre: widget.nombrePersonal,
               estado: 'guardando',
             )) {

@@ -55,11 +55,7 @@ class AgendaScreen extends StatelessWidget {
     listenable: provider,
     builder: (context, _) {
       presencia.observar(provider.dia);
-      final filas = provider.filas,
-          todas = provider.todasFilas,
-          resumen = ResumenDia.de(
-            filas.where((r) => r.texto('dia') == provider.dia).toList(),
-          );
+      final filas = provider.filas, todas = provider.todasFilas;
       return Column(
         children: [
           Padding(
@@ -195,12 +191,6 @@ class AgendaScreen extends StatelessWidget {
               ),
             ),
           ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Text(
-              'Planilla del día (PEN): contratado ${soles(resumen.contratado)} · adelantos/pagos ${soles(resumen.recibido)} · resta ${soles(resumen.pendiente)}.\nCanceladas: ${soles(resumen.retenidoCancelaciones)} recibidos pendientes de conciliación. No es un cierre de caja por fecha de cobro.',
-            ),
-          ),
           if (provider.errorCarga != null)
             Padding(
               padding: const EdgeInsets.all(16),
@@ -224,8 +214,7 @@ class AgendaScreen extends StatelessWidget {
                   builder: (context, canchas) => _HorariosLibres(
                     canchas: canchas,
                     horario: sedesProvider.horario,
-                    reservas: provider.ocupacionesDisponibilidad,
-                    dia: provider.dia,
+                    ocupacion: provider.ocupacionPorCancha,
                     sede: provider.sede,
                   ),
                 );
@@ -259,9 +248,8 @@ class AgendaScreen extends StatelessWidget {
                             '${hora(r.minutoEnDia(provider.dia))} · ${sedes[r.texto('sedeId')]} · ${r.texto('clienteNombre')}',
                           ),
                           subtitle: Text(
-                            '${r.bloqueo ? 'Mantenimiento' : (r.activo('_pendiente') ? 'guardando' : r.estado)} · ${r.entero('duracion')} min\n${r.texto('telefono')}\nMonto ${soles(r.monto)} · adelanto ${soles(r.adelanto)} · resta ${soles(r.saldo)}',
+                            '${r.bloqueo ? 'Mantenimiento' : (r.activo('_pendiente') ? 'guardando' : r.estado)} · ${r.entero('duracion')} min\n${r.texto('telefono')}',
                           ),
-                          isThreeLine: true,
                           trailing: _EstadoReserva(estado: r.estado),
                         ),
                       );
@@ -288,9 +276,6 @@ class AgendaScreen extends StatelessWidget {
                                             'Sede / cancha',
                                             'Nombre',
                                             'Teléfono',
-                                            'Monto',
-                                            'Adelanto',
-                                            'Resta',
                                             'Estado',
                                           ]
                                           .map(
@@ -319,9 +304,6 @@ class AgendaScreen extends StatelessWidget {
                                               Text(r.texto('clienteNombre')),
                                             ),
                                             DataCell(Text(r.texto('telefono'))),
-                                            DataCell(Text(soles(r.monto))),
-                                            DataCell(Text(soles(r.adelanto))),
-                                            DataCell(Text(soles(r.saldo))),
                                             DataCell(
                                               _EstadoReserva(
                                                 estado: r.activo('_pendiente')
@@ -353,53 +335,28 @@ class AgendaScreen extends StatelessWidget {
 class _HorariosLibres extends StatelessWidget {
   final List<Registro> canchas;
   final Stream<HorarioNegocio?> horario;
-  final List<Reserva> reservas;
-  final String dia, sede;
+  final Map<String, Set<int>> ocupacion;
+  final String sede;
   const _HorariosLibres({
     required this.canchas,
     required this.horario,
-    required this.reservas,
-    required this.dia,
+    required this.ocupacion,
     required this.sede,
   });
 
   /// Turnos base libres de una cancha, usando el horario comun del negocio.
   List<int> libres(Registro cancha, HorarioNegocio vigente) {
     if (!esReservable(cancha)) return const [];
-    final ocupados = <String>{};
-    for (final reserva in reservas.where(
-      (r) => r.ocupa && r.texto('canchaId') == cancha.id,
-    )) {
-      var encontroSlots = false;
-      for (final valor in reserva.datos['slots'] as List? ?? const []) {
-        final slot = valor as Map? ?? const {};
-        final diaSlot = '${slot['dia']}';
-        final minuto = int.tryParse('${slot['minute']}');
-        if (diaSlot.isNotEmpty && minuto != null) {
-          encontroSlots = true;
-          ocupados.add('$diaSlot#$minuto');
-        }
-      }
-      if (!encontroSlots) {
-        for (final slot in slotsDe(
-          dia: reserva.texto('dia'),
-          minuto: reserva.entero('minuto'),
-          duracion: reserva.entero('duracion'),
-        )) {
-          ocupados.add('${slot.dia}#${slot.minute}');
-        }
-      }
-    }
+    final ocupados = ocupacion[cancha.id] ?? const <int>{};
     return [
       for (final inicio in iniciosDeTurno(
         horario: vigente,
         duracion: vigente.duracionTurno,
       ))
-        if (slotsDe(
-          dia: dia,
+        if (minutosDe(
           minuto: inicio,
           duracion: vigente.duracionTurno,
-        ).every((slot) => !ocupados.contains('${slot.dia}#${slot.minute}')))
+        ).every((minuto) => !ocupados.contains(int.parse(minuto))))
           inicio,
     ];
   }
@@ -581,21 +538,11 @@ class DetalleReserva extends StatefulWidget {
 }
 
 class _DetalleReservaState extends State<DetalleReserva> {
-  late final adelanto = TextEditingController(
-    text: (widget.reserva.adelanto / 100).toStringAsFixed(2),
-  );
-  late final monto = TextEditingController(
-    text: (widget.reserva.monto / 100).toStringAsFixed(2),
-  );
   late String estado = widget.reserva.estado == 'pendiente'
       ? 'confirmada'
+      : widget.reserva.estado == 'confirmada'
+      ? 'cancelada'
       : widget.reserva.estado;
-  @override
-  void dispose() {
-    adelanto.dispose();
-    monto.dispose();
-    super.dispose();
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -604,15 +551,14 @@ class _DetalleReservaState extends State<DetalleReserva> {
             widget.puedeEscribir &&
             ['pendiente', 'confirmada'].contains(r.estado);
     final opciones = r.estado == 'pendiente'
-        ? ['confirmada', 'cancelada']
-        : ['confirmada', 'cancelada', 'no_asistio'];
+        ? ['confirmada', 'rechazada']
+        : ['cancelada', 'no_asistio'];
     return FormDialog(
       titulo: r.texto('clienteNombre'),
       children: [
         Text(
-          '${r.texto('dia')} ${hora(r.entero('minuto'))} · ${r.entero('duracion')} minutos\n${r.texto('telefono')}\nOrigen: ${r.texto('origen')} · pago: ${r.texto('metodoPago')}\nEstado actual: ${r.estado}\nResponsable: ${r.texto('atendidoPor')}\nCreada: ${r.datos['createdAt']}\nActualizada: ${r.datos['updatedAt']}',
+          '${r.texto('dia')} ${hora(r.entero('minuto'))} · ${r.entero('duracion')} minutos\n${r.texto('telefono')}\nOrigen: ${r.texto('origen')}\nEstado actual: ${r.estado}\nResponsable: ${r.texto('atendidoPor')}\nCreada: ${r.datos['createdAt']}\nActualizada: ${r.datos['updatedAt']}',
         ),
-        Text('Monto fijado: ${soles(r.monto)} · resta: ${soles(r.saldo)}'),
         if (editable) ...[
           DropdownButton<String>(
             value: opciones.contains(estado) ? estado : opciones.first,
@@ -622,40 +568,14 @@ class _DetalleReservaState extends State<DetalleReserva> {
                 .toList(),
             onChanged: (v) => setState(() => estado = v!),
           ),
-          if (!r.bloqueo)
-            Campo(
-              'Monto final acordado (S/)',
-              monto,
-              tipo: TextInputType.number,
-            ),
-          if (!r.bloqueo)
-            Campo(
-              'Total recibido acumulado (S/)',
-              adelanto,
-              tipo: TextInputType.number,
-            ),
           const Text(
-            'Cancelar libera todas las franjas. No registra un reembolso. Los pagos se validan manualmente.',
+            'Aprobar ocupa el horario. Rechazar no lo ocupa. Cancelar una reserva confirmada libera todos sus minutos.',
           ),
           BotonGuardar(
             operacion: widget.provider,
             texto: 'Confirmar cambio',
             onPressed: () async {
-              int total, recibido;
-              try {
-                total = centimos(monto.text);
-                recibido = centimos(adelanto.text);
-              } on FormatException catch (e) {
-                widget.provider.error = e.message;
-                widget.provider.notificar();
-                return;
-              }
-              if (await widget.provider.actualizar(
-                    r,
-                    estado,
-                    recibido,
-                    monto: total,
-                  ) &&
+              if (await widget.provider.actualizar(r, estado) &&
                   context.mounted) {
                 Navigator.pop(context);
               }

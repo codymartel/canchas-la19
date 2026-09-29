@@ -13,8 +13,13 @@ DateTime ahoraLima([DateTime? instante]) =>
     (instante ?? DateTime.now()).toUtc().subtract(const Duration(hours: 5));
 String fechaLima([DateTime? instante]) =>
     ahoraLima(instante).toIso8601String().substring(0, 10);
-String hora(int minuto) =>
-    '${(minuto ~/ 60).toString().padLeft(2, '0')}:${(minuto % 60).toString().padLeft(2, '0')}';
+String hora(int minuto) {
+  final reloj = minuto % 1440;
+  final valor =
+      '${(reloj ~/ 60).toString().padLeft(2, '0')}:${(reloj % 60).toString().padLeft(2, '0')}';
+  return minuto >= 1440 ? '$valor (+1 dia)' : valor;
+}
+
 String soles(int centimos) =>
     'S/ ${centimos ~/ 100}.${(centimos % 100).toString().padLeft(2, '0')}';
 int centimos(String valor) {

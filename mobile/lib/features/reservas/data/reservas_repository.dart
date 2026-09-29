@@ -16,7 +16,7 @@ class ReservasRepository {
   Stream<LecturaReservas> observarDia(String dia, {bool bloqueos = false}) =>
       servicios
           .coleccion(negocio, bloqueos ? 'bloqueos' : 'reservas')
-          .where('dias', arrayContains: dia)
+          .where('dia', isEqualTo: dia)
           .limit(1500)
           .snapshots(includeMetadataChanges: true)
           .map(
@@ -35,6 +35,22 @@ class ReservasRepository {
             ),
           );
 
+  Stream<LecturaOcupacion> observarOcupacion(String cancha, String dia) =>
+      servicios.db
+          .doc(rutaAgendaDia(negocio, cancha, dia))
+          .snapshots(includeMetadataChanges: true)
+          .map((doc) {
+            final data = doc.data();
+            final ocupados = Map<String, dynamic>.from(
+              data?['ocupados'] as Map? ?? const {},
+            );
+            return LecturaOcupacion(
+              minutos: ocupados.keys.map(int.parse).toSet(),
+              desdeCache: doc.metadata.isFromCache,
+              pendientes: doc.metadata.hasPendingWrites,
+            );
+          });
+
   /// Horario comun a todas las canchas, para pintar los inicios permitidos.
   Stream<HorarioNegocio?> observarHorario() => servicios.db
       .doc('negocios/$negocio')
@@ -52,39 +68,21 @@ class ReservasRepository {
     final canchaId = '${datos['canchaId']}';
     if (!esDiaValido(dia)) throw const FormatException('Fecha invalida.');
     if (!esSede(canchaId)) throw const FormatException('Cancha invalida.');
-    if (!esFranjaValida(minuto)) {
+    if (!esMinutoOperacionValido(minuto)) {
       throw const FormatException(
         'Elige un inicio en una franja de 30 minutos.',
       );
     }
-    if (!esDuracionValida(duracion)) {
-      throw const FormatException('Duracion: de 30 a 240 minutos.');
+    if (!esDuracionReservaValida(duracion) || minuto + duracion > 1500) {
+      throw const FormatException('Duracion: de 30 a 600 minutos.');
     }
-    var monto = 0, adelanto = 0, clienteId = '', nombre = '', telefono = '';
-    var metodo = 'efectivo';
+    var nombre = '', telefono = '';
     if (!bloqueo) {
-      monto = datos['montoCentimos'] as int? ?? 0;
-      adelanto = datos['adelantoCentimos'] as int? ?? 0;
-      if (monto < 0 || monto > 100000000) {
-        throw const FormatException('Monto invalido.');
-      }
-      if (adelanto < 0 || adelanto > monto) {
-        throw const FormatException('El adelanto supera el monto.');
-      }
-      metodo = '${datos['metodoPago']}';
-      if (!['yape', 'efectivo'].contains(metodo)) {
-        throw const FormatException('Metodo de pago invalido.');
-      }
       nombre = '${datos['nombre'] ?? ''}'.trim();
       if (nombre.isEmpty) {
         throw const FormatException('Completa el nombre del cliente.');
       }
       telefono = normalizarTelefono('${datos['telefono']}');
-      clienteId = '${datos['clienteId'] ?? ''}';
-      if (clienteId.isEmpty) {
-        clienteId =
-            'c_${telefono.replaceAll('+', '').hashCode.toUnsigned(32).toRadixString(16)}';
-      }
     } else {
       nombre = '${datos['motivo'] ?? ''}'.trim();
       if (nombre.isEmpty) {
@@ -97,14 +95,16 @@ class ReservasRepository {
     }
     final id = idReserva(requestId);
     final coleccion = _coleccion(datos);
-    final slots = slotsDe(dia: dia, minuto: minuto, duracion: duracion);
-    final dias = slots.map((s) => s.dia).toSet().toList();
+    if (bloqueo && duracion > 180) {
+      throw const FormatException('Un bloqueo no puede superar 180 minutos.');
+    }
+    final minutos = minutosDe(minuto: minuto, duracion: duracion);
     final inicio = inicioDe(dia, minuto);
     final sedeId = canchaId;
-    final slotRefs = [
-      for (final slot in slots)
-        servicios.db.doc(rutaFranja(negocio, canchaId, slot)),
-    ];
+    final agendaRef = servicios.db.doc(rutaAgendaDia(negocio, canchaId, dia));
+    final publicaRef = servicios.db.doc(
+      rutaAgendaPublica(negocio, canchaId, dia),
+    );
     await servicios.db.runTransaction((tx) async {
       final reservaRef = servicios.doc(negocio, coleccion, id);
       final previa = await tx.get(reservaRef);
@@ -113,13 +113,10 @@ class ReservasRepository {
       // la transaccion vuelve a ejecutarse con el horario vigente.
       final negocioDoc = await tx.get(servicios.db.doc('negocios/$negocio'));
       final cancha = await tx.get(servicios.doc(negocio, 'canchas', canchaId));
-      final ocupadas = <DocumentSnapshot<Map<String, dynamic>>>[];
-      for (final ref in slotRefs) {
-        ocupadas.add(await tx.get(ref));
-      }
+      final agenda = duracion <= 180 ? await tx.get(agendaRef) : null;
       if (previa.exists) {
         final anterior = previa.data();
-        if (anterior?['schemaVersion'] == 3 &&
+        if (anterior?['schemaVersion'] == 5 &&
             anterior?['canchaId'] == canchaId &&
             anterior?['dia'] == dia &&
             anterior?['minuto'] == minuto &&
@@ -161,65 +158,61 @@ class ReservasRepository {
           'El horario queda fuera de la atencion configurada.',
         );
       }
-      if (ocupadas.any((d) => d.exists)) {
+      final ocupados = Map<String, dynamic>.from(
+        agenda?.data()?['ocupados'] as Map? ?? const {},
+      );
+      if (minutos.any(ocupados.containsKey)) {
         throw const FormatException(
           'Horario ocupado. Actualiza la agenda y elige otra franja.',
         );
       }
       final ahora = FieldValue.serverTimestamp();
+      final confirmada = duracion <= 180;
       tx.set(reservaRef, {
-        'schemaVersion': 3,
+        'schemaVersion': 5,
         'negocioId': negocio,
         'sedeId': sedeId,
         'canchaId': canchaId,
         'dia': dia,
+        'jornada': jornadaDe(dia),
         'minuto': minuto,
         'duracion': duracion,
+        'minutos': minutos,
         'inicio': Timestamp.fromDate(inicio),
         'fin': Timestamp.fromDate(inicio.add(Duration(minutes: duracion))),
-        'dias': dias,
-        'slots': [
-          for (final slot in slots)
-            {
-              'dia': slot.dia,
-              'year': '${slot.year}',
-              'month': '${slot.month}',
-              'day': '${slot.day}',
-              'minute': '${slot.minute}',
-              'inicio': Timestamp.fromDate(slot.inicio),
-            },
-        ],
-        'estado': 'confirmada',
+        'estado': confirmada ? 'confirmada' : 'pendiente',
         'bloqueo': bloqueo,
-        'clienteId': bloqueo ? '' : clienteId,
+        'clienteId': '',
         'clienteNombre': nombre,
         'telefono': telefono,
-        'montoCentimos': monto,
-        'adelantoCentimos': adelanto,
-        'saldoCentimos': monto - adelanto,
-        'metodoPago': metodo,
-        'promocionId': '${datos['promocionId'] ?? ''}',
+        'montoCentimos': 0,
+        'adelantoCentimos': 0,
+        'saldoCentimos': 0,
+        'metodoPago': '',
+        'promocionId': '',
+        'historialPagos': <Map<String, dynamic>>[],
         'origen': 'personal',
         'solicitanteUid': '',
         'creadoPor': servicios.uid,
-        'atendidoPor': servicios.uid,
+        'atendidoPor': confirmada ? servicios.uid : '',
         'createdAt': ahora,
         'updatedAt': ahora,
         'version': 1,
       });
-      for (var i = 0; i < slots.length; i++) {
-        final slot = slots[i];
-        tx.set(slotRefs[i], {
-          'reservaId': id,
-          'coleccion': coleccion,
-          'canchaId': canchaId,
-          'year': '${slot.year}',
-          'month': '${slot.month}',
-          'day': '${slot.day}',
-          'minute': '${slot.minute}',
-          'inicio': Timestamp.fromDate(slot.inicio),
-          'indice': i,
+      if (confirmada) {
+        for (final minuto in minutos) {
+          ocupados[minuto] = true;
+        }
+        tx.set(agendaRef, {
+          'ocupados': ocupados,
+          'ultimaOperacion': {
+            'reservaId': id,
+            'coleccion': coleccion,
+            'tipo': 'ocupar',
+            'minutos': minutos,
+          },
         });
+        tx.set(publicaRef, {'ocupados': ocupados});
       }
     });
   });
@@ -235,17 +228,21 @@ class ReservasRepository {
     if (!esEstadoReserva(estado)) {
       throw const FormatException('Estado invalido.');
     }
-    if (!['confirmada', 'cancelada', 'no_asistio'].contains(estado)) {
+    if (![
+      'confirmada',
+      'rechazada',
+      'cancelada',
+      'no_asistio',
+    ].contains(estado)) {
       throw const FormatException('Transicion no permitida.');
     }
     final version = datos['version'] as int? ?? 0;
-    final adelanto = datos['adelantoCentimos'] as int? ?? 0;
     final coleccion = bloqueo ? 'bloqueos' : 'reservas';
     final ref = servicios.doc(negocio, coleccion, id);
     await servicios.db.runTransaction((tx) async {
       final actual = await tx.get(ref);
       final data = actual.data();
-      if (data == null || data['schemaVersion'] != 3) {
+      if (data == null || data['schemaVersion'] != 5) {
         throw const FormatException('Reserva no encontrada.');
       }
       if (data['version'] != version) {
@@ -256,37 +253,61 @@ class ReservasRepository {
       if (!['pendiente', 'confirmada'].contains('${data['estado']}')) {
         throw const FormatException('La reserva ya no admite cambios.');
       }
-      final montoAnterior = (data['montoCentimos'] as num?)?.toInt() ?? 0;
-      final monto = data['estado'] == 'pendiente'
-          ? datos['montoCentimos'] as int? ?? montoAnterior
-          : montoAnterior;
-      final previo = (data['adelantoCentimos'] as num?)?.toInt() ?? 0;
-      if (adelanto < previo || adelanto > monto) {
-        throw const FormatException('Adelanto invalido.');
+      final anterior = '${data['estado']}';
+      final permitida = anterior == 'pendiente'
+          ? ['confirmada', 'rechazada'].contains(estado)
+          : ['cancelada', 'no_asistio'].contains(estado);
+      if (!permitida) {
+        throw const FormatException('Transicion no permitida.');
+      }
+      final cancha = '${data['canchaId']}';
+      final dia = '${data['dia']}';
+      final minutos = List<String>.from(data['minutos'] as List? ?? const []);
+      final cambiaOcupacion =
+          anterior == 'pendiente' && estado == 'confirmada' ||
+          anterior == 'confirmada' && estado == 'cancelada';
+      final agendaRef = servicios.db.doc(rutaAgendaDia(negocio, cancha, dia));
+      final publicaRef = servicios.db.doc(
+        rutaAgendaPublica(negocio, cancha, dia),
+      );
+      final agenda = cambiaOcupacion ? await tx.get(agendaRef) : null;
+      final ocupados = Map<String, dynamic>.from(
+        agenda?.data()?['ocupados'] as Map? ?? const {},
+      );
+      if (anterior == 'pendiente' && estado == 'confirmada') {
+        if (minutos.any(ocupados.containsKey)) {
+          throw const FormatException('El horario ya no esta disponible.');
+        }
+        for (final minuto in minutos) {
+          ocupados[minuto] = true;
+        }
+      } else if (anterior == 'confirmada' && estado == 'cancelada') {
+        if (minutos.any((minuto) => ocupados[minuto] != true)) {
+          throw const FormatException(
+            'La ocupacion de la reserva esta incompleta.',
+          );
+        }
+        for (final minuto in minutos) {
+          ocupados.remove(minuto);
+        }
       }
       tx.update(ref, {
         'estado': estado,
-        'montoCentimos': monto,
-        'adelantoCentimos': adelanto,
-        'saldoCentimos': monto - adelanto,
         'atendidoPor': servicios.uid,
         'updatedAt': FieldValue.serverTimestamp(),
         'version': version + 1,
       });
-      if (estado == 'cancelada') {
-        final cancha = '${data['canchaId']}';
-        final slots = List<Map<String, dynamic>>.from(
-          (data['slots'] as List? ?? const []).map(
-            (s) => Map<String, dynamic>.from(s as Map),
-          ),
-        );
-        for (final slot in slots) {
-          tx.delete(
-            servicios.db.doc(
-              'negocios/$negocio/agenda/$cancha/anios/${slot['year']}/meses/${slot['month']}/dias/${slot['day']}/franjas/${slot['minute']}',
-            ),
-          );
-        }
+      if (cambiaOcupacion) {
+        tx.set(agendaRef, {
+          'ocupados': ocupados,
+          'ultimaOperacion': {
+            'reservaId': id,
+            'coleccion': coleccion,
+            'tipo': estado == 'confirmada' ? 'ocupar' : 'liberar',
+            'minutos': minutos,
+          },
+        });
+        tx.set(publicaRef, {'ocupados': ocupados});
       }
     });
   });
@@ -297,6 +318,16 @@ class LecturaReservas {
   final bool desdeCache, pendientes;
   const LecturaReservas({
     required this.reservas,
+    required this.desdeCache,
+    required this.pendientes,
+  });
+}
+
+class LecturaOcupacion {
+  final Set<int> minutos;
+  final bool desdeCache, pendientes;
+  const LecturaOcupacion({
+    required this.minutos,
     required this.desdeCache,
     required this.pendientes,
   });

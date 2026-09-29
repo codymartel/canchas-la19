@@ -64,12 +64,14 @@ try {
     .where('activa', '==', true)
     .get({ source: 'server' });
   const lima = new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString().slice(0, 10);
-  const [year, month, day] = lima.split('-').map(Number);
   for (const cancha of ids) {
-    await db.collection('negocios').doc(BUSINESS).collection('agenda').doc(cancha)
-      .collection('anios').doc(String(year)).collection('meses').doc(String(month))
-      .collection('dias').doc(String(day)).collection('franjas')
+    const agenda = await db.collection('agenda_publica').doc(BUSINESS)
+      .collection('canchas').doc(cancha).collection('dias').doc(lima)
       .get({ source: 'server' });
+    if (agenda.exists) {
+      assert.deepEqual(Object.keys(agenda.data()), ['ocupados']);
+      assert.equal(typeof agenda.data().ocupados, 'object');
+    }
   }
   console.log(JSON.stringify({
     projectId: PROJECT,

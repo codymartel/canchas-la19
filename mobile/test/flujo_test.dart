@@ -280,14 +280,13 @@ void main() {
   });
 
   group('reglas de negocio compartidas', () {
-    test('franjas canonicas cubren el intervalo y cruzan medianoche', () {
-      final slots = slotsDe(dia: '2026-10-05', minuto: 1410, duracion: 90);
-      expect(slots.map((s) => s.minute), [1410, 0, 30]);
-      expect(slots.map((s) => s.dia), [
-        '2026-10-05',
-        '2026-10-06',
-        '2026-10-06',
-      ]);
+    test('minutos canonicos cubren el intervalo y cruzan medianoche', () {
+      expect(minutosDe(minuto: 1410, duracion: 90), ['1410', '1440', '1470']);
+      expect(jornadaDe('2026-10-05'), {
+        'year': '2026',
+        'month': '10',
+        'day': '05',
+      });
       expect(esDuracionValida(60), isTrue);
       expect(esDuracionValida(150), isTrue);
       expect(esDuracionValida(45), isFalse);
@@ -298,12 +297,12 @@ void main() {
       expect(esEstadoReserva('inventada'), isFalse);
     });
 
-    test('la ruta de ocupacion es compartida y canonica', () {
-      final slot = slotsDe(dia: '2026-10-05', minuto: 600, duracion: 30).single;
-      final a = rutaFranja(negocioId, 'la-19', slot);
+    test('las rutas diarias privada y publica son canonicas', () {
+      final a = rutaAgendaDia(negocioId, 'la-19', '2026-10-05');
+      expect(a, 'negocios/$negocioId/agenda/la-19/dias/2026-10-05');
       expect(
-        a,
-        'negocios/$negocioId/agenda/la-19/anios/2026/meses/10/dias/5/franjas/600',
+        rutaAgendaPublica(negocioId, 'la-19', '2026-10-05'),
+        'agenda_publica/$negocioId/canchas/la-19/dias/2026-10-05',
       );
       expect(
         a.split('/').length.isEven,
@@ -311,7 +310,7 @@ void main() {
         reason: 'las rutas de documento necesitan segmentos pares',
       );
       expect(
-        a.contains('reserva'),
+        a.contains('/reservas/'),
         isFalse,
         reason: 'la clave no puede incluir la reserva',
       );

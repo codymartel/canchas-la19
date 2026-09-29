@@ -3,6 +3,7 @@ import {solicitarReserva} from './reserva.js';
 
 const $ = id => document.getElementById(id);
 const NEGOCIO = 'grass-sintetico';
+const RESERVAS = window.GRASS_RESERVAS_HABILITADAS === true;
 const nombres = {'la-19':'La 19','la-23':'La 23','la-24':'La 24'};
 
 firebase.initializeApp(window.GRASS_FIREBASE_CONFIG);
@@ -15,6 +16,17 @@ if (['localhost','127.0.0.1'].includes(location.hostname)) {
 
 let canchas = [], promociones = [], ocupacion = new Map(), horario = null;
 let enviando = false, solicitud = null, cargando = false, revision = 0, completada = false;
+
+// Mientras las reservas esten deshabilitadas el formulario no se ofrece: se
+// oculta y todos sus controles quedan inutilizables, aunque se publiquen canchas.
+function aplicarEstadoReservas(){
+  if(RESERVAS)return;
+  $('reserva').hidden=true;
+  $('campos').disabled=true;
+  for(const control of $('campos').querySelectorAll('input,select'))control.disabled=true;
+  for(const boton of [$('enviar'),$('nueva')]){boton.disabled=true;boton.hidden=true;}
+  $('aviso-reservas').hidden=false;
+}
 
 function mensaje(texto,tipo='info'){
   $('estado').textContent=texto;
@@ -36,10 +48,8 @@ function telefonoNormalizado(valor){
   return `+${numero}`;
 }
 function rutaDia(cancha,dia){
-  const [year,month,day]=dia.split('-').map(Number);
-  return db.collection('negocios').doc(NEGOCIO).collection('agenda').doc(cancha)
-    .collection('anios').doc(String(year)).collection('meses').doc(String(month))
-    .collection('dias').doc(String(day)).collection('franjas');
+  return db.collection('agenda_publica').doc(NEGOCIO).collection('canchas').doc(cancha)
+    .collection('dias').doc(dia);
 }
 function libresCancha(canchaId,dia){
   const usados=ocupacion.get(canchaId)??new Set();
@@ -48,12 +58,8 @@ function libresCancha(canchaId,dia){
   const ahoraLima=new Date(Date.now()-5*3600000);
   const minimo=dia===hoyLima()?Math.ceil((ahoraLima.getUTCHours()*60+ahoraLima.getUTCMinutes())/30)*30:0;
   const apertura=horario.aperturaMinuto,cierre=horario.cierreMinuto;
-  if(cierre>apertura){
-    for(let m=apertura;m<cierre;m+=30)if(m>=minimo&&!usados.has(m))posibles.push(m);
-  }else{
-    for(let m=0;m<cierre;m+=30)if(m>=minimo&&!usados.has(m))posibles.push(m);
-    for(let m=apertura;m<1440+cierre;m+=30)if(m>=minimo&&!usados.has(m))posibles.push(m);
-  }
+  const limite=cierre>apertura?cierre:1440+cierre;
+  for(let m=apertura;m<limite;m+=30)if(m>=minimo&&!usados.has(m))posibles.push(m);
   return posibles;
 }
 function tarjetasCanchas(){
@@ -65,8 +71,10 @@ function tarjetasCanchas(){
     if(!cancha){p.textContent='Información pendiente de habilitación por el personal.';article.className='inactiva';}
     else{
       const turno=horario?.duracionTurnoMinutos;
-      const proximos=turno?iniciosDeTurno(libresCancha(cancha.id,$('dia').value),turno,horario.aperturaMinuto,turno).slice(0,4).map(hora).join(' · '):'';
-      p.textContent=`${cancha.nombre} · ${cancha.direccion}\n${soles(cancha.tarifaTurnoCentimos)}${turno?` por turno de ${turno} min`:''}\nPróximos inicios: ${proximos||'sin horarios libres'}`;
+      const proximos=RESERVAS&&turno?iniciosDeTurno(libresCancha(cancha.id,$('dia').value),turno,horario.aperturaMinuto,turno).slice(0,4).map(hora).join(' · '):'';
+      const lineas=[`${cancha.nombre} · ${cancha.direccion}`,`${soles(cancha.tarifaTurnoCentimos)}${turno?` por turno de ${turno} min`:''}`];
+      if(RESERVAS)lineas.push(`Próximos inicios: ${proximos||'sin horarios libres'}`);
+      p.textContent=lineas.join('\n');
     }
     article.append(p);contenedor.append(article);
   }
@@ -83,23 +91,19 @@ function tarjetasPromociones(){
 function actualizarHoras(){
   const cancha=canchas.find(c=>c.id===$('cancha').value),anterior=$('minuto').value;
   const turno=horario?.duracionTurnoMinutos,duracionAnterior=Number($('duracion').value);
-  const duraciones=cancha&&turno?Array.from({length:Math.floor(240/turno)},(_,i)=>(i+1)*turno):[];
+  const duraciones=cancha&&turno?Array.from({length:Math.floor(600/turno)},(_,i)=>(i+1)*turno):[];
   $('duracion').replaceChildren(...duraciones.map(valor=>opcion(valor,valor===turno?`${valor} minutos (1 turno)`:`${valor} minutos (${valor/turno} turnos)`)));
   if(duraciones.includes(duracionAnterior))$('duracion').value=String(duracionAnterior);
   const libres=cancha&&turno?iniciosDeTurno(libresCancha(cancha.id,$('dia').value),Number($('duracion').value),horario.aperturaMinuto,turno):[];
   $('minuto').replaceChildren(opcion('','Selecciona horario'),...libres.map(m=>opcion(m,hora(m))));
   if(libres.includes(Number(anterior))&&anterior!=='')$('minuto').value=anterior;
-  const seleccion=$('promocion').value;
-  const aplicables=promociones.filter(p=>p.sedes.includes(cancha?.sedeId)&&p.desde<=$('dia').value&&p.hasta>=$('dia').value);
-  $('promocion').replaceChildren(opcion('','Sin promoción'),...aplicables.map(p=>opcion(p.id,p.titulo)));
-  if(aplicables.some(p=>p.id===seleccion))$('promocion').value=seleccion;
   actualizarPrecio();
 }
 function actualizarPrecio(){
-  const c=canchas.find(c=>c.id===$('cancha').value),p=promociones.find(p=>p.id===$('promocion').value);
-  const turno=horario?.duracionTurnoMinutos;
-  $('precio').textContent=c&&turno
-    ? `Estimado: ${soles(Math.max(0,c.tarifaTurnoCentimos*Number($('duracion').value)/turno-(p?.descuentoCentimos??0)))}. El personal confirma el precio total acordado.`
+  const c=canchas.find(c=>c.id===$('cancha').value);
+  const turno=horario?.duracionTurnoMinutos,duracion=Number($('duracion').value);
+  $('precio').textContent=c&&turno&&duracion
+    ? `Referencial: ${soles(c.tarifaTurnoCentimos*duracion/turno)} por ${duracion} minutos. El personal confirma el precio total acordado.`
     :'Selecciona una cancha habilitada.';
 }
 async function cargarConfiguracion(){
@@ -128,49 +132,53 @@ async function cargar(){
   cargando=true;const actual=++revision,dia=$('dia').value;$('recargar').disabled=true;
   mensaje('Consultando el servidor…');
   try{
-    if(!auth.currentUser)await auth.signInAnonymously();
+    if(RESERVAS&&!auth.currentUser)await auth.signInAnonymously();
     const canchasSnap=await db.collection('canchas_publicas').where('activa','==',true).get({source:'server'});
     const promosSnap=await db.collection('promociones_publicas').where('activa','==',true).get({source:'server'});
     if(actual!==revision||dia!==$('dia').value)return;
     canchas=canchasSnap.docs.map(d=>({id:d.id,...d.data()}));
     promociones=promosSnap.docs.map(d=>({id:d.id,...d.data()}));
-    const manana=siguienteDia(dia),lecturas=[];
+    const lecturas=[];
     for(const cancha of canchas){
-      lecturas.push(Promise.all([rutaDia(cancha.id,dia).get({source:'server'}),rutaDia(cancha.id,manana).get({source:'server'})])
-        .then(([hoy,prox])=>{
-          const usados=new Set(hoy.docs.map(d=>Number(d.id)));
-          for(const d of prox.docs)usados.add(1440+Number(d.id));
-          ocupacion.set(cancha.id,usados);
-        }));
+      lecturas.push(rutaDia(cancha.id,dia).get({source:'server'}).then(snap=>{
+        const usados=new Set(Object.keys(snap.data()?.ocupados??{}).map(Number));
+        ocupacion.set(cancha.id,usados);
+      }));
     }
     await Promise.all(lecturas);
     const anterior=$('cancha').value;
     $('cancha').replaceChildren(opcion('','Selecciona cancha'),...canchas.map(c=>opcion(c.id,`${nombres[c.sedeId]} / ${c.nombre}`)));
     if(canchas.some(c=>c.id===anterior))$('cancha').value=anterior;
     tarjetasCanchas();tarjetasPromociones();actualizarHoras();
-    mensaje(!horario?'El horario global aun no esta publicado. No se pueden solicitar reservas.'
+    mensaje(!RESERVAS?'Reservas en línea aún no habilitadas. Estado pendiente.'
+      :!horario?'El horario global aun no esta publicado. No se pueden solicitar reservas.'
       :canchas.length?'Disponibilidad confirmada por el servidor. El horario se asegura al enviar.':'No hay canchas habilitadas todavía.','ok');
   }catch(error){mensaje(errorMensaje(error),'error');}
   finally{cargando=false;$('recargar').disabled=false;}
 }
 $('dia').value=hoyLima();$('dia').min=hoyLima();$('dia').max=siguienteDia(hoyLima(),179);
 $('dia').addEventListener('change',()=>{revision++;cargando=false;cargar();});
-$('cancha').addEventListener('change',actualizarHoras);$('duracion').addEventListener('change',actualizarHoras);$('promocion').addEventListener('change',actualizarPrecio);
+$('cancha').addEventListener('change',actualizarHoras);$('duracion').addEventListener('change',actualizarHoras);
 $('recargar').addEventListener('click',cargar);
 $('nueva').addEventListener('click',()=>{solicitud=null;completada=false;$('campos').disabled=false;$('enviar').disabled=false;$('enviar').textContent='Solicitar reserva';$('nueva').hidden=true;cargar();});
 $('reserva').addEventListener('submit',async event=>{
-  event.preventDefault();if(enviando||completada)return;enviando=true;$('enviar').disabled=true;mensaje('Guardando y comprobando todas las franjas…');
+  event.preventDefault();
+  // Barrera explicita: aunque alguien dispare el formulario a mano, no se escribe.
+  if(!RESERVAS){mensaje('Las reservas en línea aún no están habilitadas.','error');return;}
+  if(enviando||completada)return;enviando=true;$('enviar').disabled=true;mensaje('Guardando y comprobando todas las franjas…');
   try{
     if(!auth.currentUser)await auth.signInAnonymously();
     if(!solicitud){
-      const payload={dia:$('dia').value,canchaId:$('cancha').value,minuto:Number($('minuto').value),duracion:Number($('duracion').value),nombre:$('nombre').value,telefono:telefonoNormalizado($('telefono').value),metodoPago:$('metodo').value,promocionId:$('promocion').value||''};
+      const payload={dia:$('dia').value,canchaId:$('cancha').value,minuto:Number($('minuto').value),duracion:Number($('duracion').value),nombre:$('nombre').value,telefono:telefonoNormalizado($('telefono').value)};
       const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(payload)));
       const clave='grass-'+Array.from(new Uint8Array(digest),b=>b.toString(16).padStart(2,'0')).join('');
       const requestId=sessionStorage.getItem(clave)||crypto.randomUUID();sessionStorage.setItem(clave,requestId);
       solicitud={...payload,requestId};$('campos').disabled=true;
     }
     const resultado=await solicitarReserva({firebase,db,uid:auth.currentUser.uid,negocio:NEGOCIO,datos:solicitud});completada=true;
-    mensaje(`Solicitud ${resultado.id}: pendiente. El horario quedó ocupado y el personal debe confirmar el precio y el adelanto manual. Guarda este código.`,'ok');
+    mensaje(resultado.estado==='confirmada'
+      ?`Reserva ${resultado.id}: confirmada y horario ocupado. Guarda este código.`
+      :`Solicitud ${resultado.id}: pendiente. El horario no se ocupará hasta que el personal asignado la apruebe. Guarda este código.`,'ok');
     $('nueva').hidden=false;
   }catch(error){mensaje(errorMensaje(error),'error');$('enviar').textContent='Reintentar misma solicitud';$('nueva').hidden=false;}
   finally{enviando=false;$('enviar').disabled=completada;}
@@ -178,6 +186,7 @@ $('reserva').addEventListener('submit',async event=>{
 
 // La configuracion publica trae el horario global: se carga antes que las
 // canchas para no pintar disponibilidad con un horario que aun no se conoce.
+aplicarEstadoReservas();
 await cargarConfiguracion();
 await cargar();
 setInterval(()=>{if(!document.hidden&&!enviando)cargar();},30000);

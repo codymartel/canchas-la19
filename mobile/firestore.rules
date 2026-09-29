@@ -87,6 +87,22 @@ service cloud.firestore {
           && get(ruta).data.permisos[permiso] == true);
     }
 
+    function puedeResolverCancha(n, cancha) {
+      let config = /databases/$(database)/documents/sistema/grass;
+      let ruta = /databases/$(database)/documents/negocios/$(n)/empleados/$(request.auth.uid);
+      return autenticado() && exists(config)
+        && get(config).data.negocioId == n
+        && (verificado()
+            && get(config).data.administradorUid == request.auth.uid
+          || exists(ruta)
+            && get(ruta).data.activo == true
+            && get(ruta).data.rol == 'empleado_control'
+            && get(ruta).data.permisos != null
+            && get(ruta).data.permisos.reservas == true
+            && get(ruta).data.sedes is list
+            && cancha in get(ruta).data.sedes);
+    }
+
     function limite(n) {
       return request.query.limit != null && request.query.limit <= n;
     }
@@ -96,85 +112,64 @@ service cloud.firestore {
     }
 
     function duracionValida(d) {
-      return d is int && d >= 30 && d <= 240 && d % 30 == 0;
+      return d is int && d >= 30 && d <= 600 && d % 30 == 0;
     }
 
-    // El sello de tiempo de abajo fija la fecha real, asi que aqui basta con
-    // acotar los rangos en vez de usar expresiones regulares, que son caras
-    // cuando se evaluan una vez por cada franja de la reserva.
-    function slotBaseValido(s, r, i) {
-      return s is map
-        && s.keys().hasOnly(['dia', 'year', 'month', 'day', 'minute', 'inicio'])
-        && s.dia is string && s.dia.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
-        && s.year is string && int(s.year) >= 2000 && int(s.year) <= 2100
-        && s.month is string && int(s.month) >= 1 && int(s.month) <= 12
-        && s.day is string && int(s.day) >= 1 && int(s.day) <= 31
-        && s.minute is string
-        && int(s.minute) >= 0 && int(s.minute) < 1440 && int(s.minute) % 30 == 0
-        && s.inicio is timestamp
-        && s.inicio == r.inicio + duration.value(i * 30, 'm')
-        && s.inicio == timestamp.date(int(s.year), int(s.month), int(s.day))
-          + duration.value(int(s.minute) + 300, 'm');
+    function jornadaValida(j, dia) {
+      return j is map && j.size() == 3
+        && j.year is string && j.year.matches('^[0-9]{4}$')
+        && j.month is string && j.month.matches('^(0[1-9]|1[0-2])$')
+        && j.day is string && j.day.matches('^(0[1-9]|[12][0-9]|3[01])$')
+        && dia == j.year + '-' + j.month + '-' + j.day;
     }
 
-    function slotCreado(n, id, coleccion, r, i) {
-      let s = r.slots[i];
-      let ruta = /databases/$(database)/documents/negocios/$(n)/agenda/$(r.canchaId)/anios/$(s.year)/meses/$(s.month)/dias/$(s.day)/franjas/$(s.minute);
-      let o = getAfter(ruta).data;
-      return existsAfter(ruta)
-        && o.reservaId == id
-        && o.coleccion == coleccion;
+    function segmentoValido(s) {
+      return s is map && s.size() == 6
+        && s.year is string && s.year.matches('^[0-9]{4}$')
+        && s.month is string && s.month.matches('^(0[1-9]|1[0-2])$')
+        && s.day is string && s.day.matches('^(0[1-9]|[12][0-9]|3[01])$')
+        && s.dia == s.year + '-' + s.month + '-' + s.day
+        && s.minuto is string && s.minuto.matches('^(0|[1-9][0-9]{0,3})$')
+        && int(s.minuto) >= 0 && int(s.minuto) < 1440
+        && int(s.minuto) % 30 == 0
+        && s.cantidad is int && s.cantidad >= 1 && s.cantidad <= 36;
     }
 
-    function slotsCreados(n, id, coleccion, r) {
-      return r.slots is list
-        && r.slots.size() == r.duracion / 30
-        && r.slots.size() >= 1 && r.slots.size() <= 8
-        && slotCreado(n, id, coleccion, r, 0)
-        && (r.slots.size() < 2 || slotCreado(n, id, coleccion, r, 1))
-        && (r.slots.size() < 3 || slotCreado(n, id, coleccion, r, 2))
-        && (r.slots.size() < 4 || slotCreado(n, id, coleccion, r, 3))
-        && (r.slots.size() < 5 || slotCreado(n, id, coleccion, r, 4))
-        && (r.slots.size() < 6 || slotCreado(n, id, coleccion, r, 5))
-        && (r.slots.size() < 7 || slotCreado(n, id, coleccion, r, 6))
-        && (r.slots.size() < 8 || slotCreado(n, id, coleccion, r, 7));
+    function segmentosValidos(r) {
+      let primero = r.segmentos[0];
+      return r.segmentos is list
+        && r.segmentos.size() >= 1 && r.segmentos.size() <= 2
+        && segmentoValido(primero)
+        && r.inicio == timestamp.date(
+          int(primero.year), int(primero.month), int(primero.day))
+          + duration.value(int(primero.minuto) + 300, 'm')
+        && (r.segmentos.size() == 1
+            && primero.cantidad == r.duracion / 30
+            && int(primero.minuto) + primero.cantidad * 30 <= 1440
+          || r.segmentos.size() == 2
+            && segmentoValido(r.segmentos[1])
+            && int(primero.minuto) + primero.cantidad * 30 == 1440
+            && int(r.segmentos[1].minuto) == 0
+            && primero.cantidad + r.segmentos[1].cantidad == r.duracion / 30
+            && timestamp.date(
+              int(r.segmentos[1].year),
+              int(r.segmentos[1].month),
+              int(r.segmentos[1].day)) + duration.value(300, 'm')
+              == r.inicio + duration.value(primero.cantidad * 30, 'm'));
+    }
+
+    function rutaAgendaDia(n, cancha, dia) {
+      return /databases/$(database)/documents/negocios/$(n)/agenda/$(cancha)/dias/$(dia);
+    }
+
+    function rutaOcupacionPublica(n, cancha, dia) {
+      return /databases/$(database)/documents/agenda_publica/$(n)/canchas/$(cancha)/dias/$(dia);
     }
 
     function diasValidos(r) {
-      let ultimo = r.slots[r.slots.size() - 1];
-      // El campo dia de cada slot ya se valido contra su year/month/day, asi que
-      // comparar dias no necesita maths de timestamps ni zona horaria.
-      let mismoDia = ultimo.dia == r.slots[0].dia;
-      return r.dias[0] == r.slots[0].dia
-        && (r.dias.size() == 1 && mismoDia
-          || r.dias.size() == 2 && !mismoDia && r.dias[1] == ultimo.dia);
-    }
-
-    function slotsPresentes(n, r) {
-      return existsAfter(/databases/$(database)/documents/negocios/$(n)/agenda/$(r.canchaId)/anios/$(r.slots[0].year)/meses/$(r.slots[0].month)/dias/$(r.slots[0].day)/franjas/$(r.slots[0].minute))
-        && (r.slots.size() < 2 || existsAfter(/databases/$(database)/documents/negocios/$(n)/agenda/$(r.canchaId)/anios/$(r.slots[1].year)/meses/$(r.slots[1].month)/dias/$(r.slots[1].day)/franjas/$(r.slots[1].minute)))
-        && (r.slots.size() < 3 || existsAfter(/databases/$(database)/documents/negocios/$(n)/agenda/$(r.canchaId)/anios/$(r.slots[2].year)/meses/$(r.slots[2].month)/dias/$(r.slots[2].day)/franjas/$(r.slots[2].minute)))
-        && (r.slots.size() < 4 || existsAfter(/databases/$(database)/documents/negocios/$(n)/agenda/$(r.canchaId)/anios/$(r.slots[3].year)/meses/$(r.slots[3].month)/dias/$(r.slots[3].day)/franjas/$(r.slots[3].minute)))
-        && (r.slots.size() < 5 || existsAfter(/databases/$(database)/documents/negocios/$(n)/agenda/$(r.canchaId)/anios/$(r.slots[4].year)/meses/$(r.slots[4].month)/dias/$(r.slots[4].day)/franjas/$(r.slots[4].minute)))
-        && (r.slots.size() < 6 || existsAfter(/databases/$(database)/documents/negocios/$(n)/agenda/$(r.canchaId)/anios/$(r.slots[5].year)/meses/$(r.slots[5].month)/dias/$(r.slots[5].day)/franjas/$(r.slots[5].minute)))
-        && (r.slots.size() < 7 || existsAfter(/databases/$(database)/documents/negocios/$(n)/agenda/$(r.canchaId)/anios/$(r.slots[6].year)/meses/$(r.slots[6].month)/dias/$(r.slots[6].day)/franjas/$(r.slots[6].minute)))
-        && (r.slots.size() < 8 || existsAfter(/databases/$(database)/documents/negocios/$(n)/agenda/$(r.canchaId)/anios/$(r.slots[7].year)/meses/$(r.slots[7].month)/dias/$(r.slots[7].day)/franjas/$(r.slots[7].minute)));
-    }
-
-    function slotAusente(n, r, i) {
-      let s = r.slots[i];
-      return !existsAfter(/databases/$(database)/documents/negocios/$(n)/agenda/$(r.canchaId)/anios/$(s.year)/meses/$(s.month)/dias/$(s.day)/franjas/$(s.minute));
-    }
-
-    function slotsLiberados(n, r) {
-      return slotAusente(n, r, 0)
-        && (r.slots.size() < 2 || slotAusente(n, r, 1))
-        && (r.slots.size() < 3 || slotAusente(n, r, 2))
-        && (r.slots.size() < 4 || slotAusente(n, r, 3))
-        && (r.slots.size() < 5 || slotAusente(n, r, 4))
-        && (r.slots.size() < 6 || slotAusente(n, r, 5))
-        && (r.slots.size() < 7 || slotAusente(n, r, 6))
-        && (r.slots.size() < 8 || slotAusente(n, r, 7));
+      return r.dias is list && r.dias.size() == r.segmentos.size()
+        && r.dias[0] == r.segmentos[0].dia
+        && (r.dias.size() == 1 || r.dias[1] == r.segmentos[1].dia);
     }
 
     // Horario de atencion y duracion base del turno: una sola configuracion
@@ -210,13 +205,12 @@ service cloud.firestore {
     // Ternarios y cuerpos con if no compilan en el emulador, asi que el cruce
     // de medianoche se expresa como una sola formula booleana.
     function cabe(h, r) {
-      return r.minuto >= h.aperturaMinuto
-        && (r.minuto + r.duracion <= h.cierreMinuto
-          || (h.cierreMinuto < h.aperturaMinuto
-            && r.minuto + r.duracion <= h.cierreMinuto + 1440))
-        || (h.cierreMinuto < h.aperturaMinuto
-          && r.minuto < h.cierreMinuto
-          && r.minuto + r.duracion <= h.cierreMinuto);
+      return h.cierreMinuto > h.aperturaMinuto
+          && r.minuto >= h.aperturaMinuto
+          && r.minuto + r.duracion <= h.cierreMinuto
+        || h.cierreMinuto < h.aperturaMinuto
+          && r.minuto >= h.aperturaMinuto
+          && r.minuto + r.duracion <= h.cierreMinuto + 1440;
     }
 
     function dentroHorario(n, r) {
@@ -275,36 +269,31 @@ service cloud.firestore {
     }
 
     function camposReservaValidos(n, r, coleccion) {
-      return r.keys().hasOnly([
-          'schemaVersion', 'negocioId', 'sedeId', 'canchaId', 'dia', 'dias',
-          'minuto', 'duracion', 'inicio', 'fin', 'slots', 'estado', 'bloqueo',
-          'clienteId', 'clienteNombre', 'telefono', 'montoCentimos',
-          'adelantoCentimos', 'saldoCentimos', 'metodoPago', 'promocionId',
-          'origen', 'solicitanteUid', 'creadoPor', 'atendidoPor',
-          'createdAt', 'updatedAt', 'version'
-        ])
-        && r.schemaVersion == 3
+      return r.size() == 29
+        && r.schemaVersion == 5
         && negocioCoincide(n)
         && r.negocioId == n
         && sedeValida(r.canchaId)
         && r.sedeId == r.canchaId
-        && r.dia is string && r.dia.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
-        && r.dias is list && r.dias.size() >= 1 && r.dias.size() <= 2
-        && r.slots is list && r.slots.size() >= 1 && r.slots.size() <= 8
-        && r.minuto is int && r.minuto >= 0 && r.minuto < 1440 && r.minuto % 30 == 0
+        && r.dia is string && jornadaValida(r.jornada, r.dia)
+        && r.minuto is int && r.minuto >= 0 && r.minuto < 2880
         && duracionValida(r.duracion)
-        && r.inicio is timestamp && r.fin == r.inicio + duration.value(r.duracion, 'm')
+        && r.minutos is list
+        && minutosCorresponden(r, r.minutos)
+        && r.inicio is timestamp
+        && r.inicio == timestamp.date(
+          int(r.jornada.year), int(r.jornada.month), int(r.jornada.day))
+          + duration.value(r.minuto + 300, 'm')
+        && r.fin == r.inicio + duration.value(r.duracion, 'm')
         && r.version == 1
-        && r.montoCentimos is int && r.montoCentimos >= 0
-        && r.adelantoCentimos is int && r.adelantoCentimos >= 0
-        && r.adelantoCentimos <= r.montoCentimos
-        && r.saldoCentimos == r.montoCentimos - r.adelantoCentimos
-        && r.metodoPago in ['yape', 'efectivo']
-        && r.promocionId is string && r.promocionId.size() <= 100
+        && r.montoCentimos == 0 && r.adelantoCentimos == 0
+        && r.saldoCentimos == 0 && r.metodoPago == ''
+        && r.promocionId == ''
+        && r.historialPagos is list && r.historialPagos.size() == 0
         && r.clienteNombre is string && r.clienteNombre.size() > 0
         && r.clienteNombre.size() <= 120
         && r.telefono is string && r.telefono.size() <= 24
-        && dentroHorario(n, r)
+        && r.createdAt is timestamp && r.updatedAt is timestamp
         && camposSegunColeccion(coleccion, r);
     }
 
@@ -318,25 +307,56 @@ service cloud.firestore {
     function camposBloqueo(r) {
       return r.bloqueo == true
         && r.clienteId == '' && r.telefono == ''
-        && r.montoCentimos == 0 && r.adelantoCentimos == 0;
+        && r.montoCentimos == 0 && r.adelantoCentimos == 0
+        && r.origen == 'personal';
     }
 
     function camposReserva(r) {
       return r.bloqueo == false
+        && r.clienteId == ''
         && r.telefono.size() >= 7
-        && r.clienteId is string && r.clienteId.size() <= 100
-        && ((r.origen == 'publico' && r.clienteId == '')
-          || (r.origen == 'personal' && r.clienteId.size() > 0));
+        && r.origen in ['publico', 'personal'];
+    }
+
+    function minutosCorresponden(r, minutos) {
+      return minutos.size() == r.duracion / 30
+        && minutos[0] == string(r.minuto);
+    }
+
+    function cambioOcupaAgenda(n, id, coleccion, r) {
+      let ruta = rutaAgendaDia(n, r.canchaId, r.dia);
+      let despues = getAfter(ruta).data;
+      return existsAfter(ruta)
+        && despues.ultimaOperacion.reservaId == id
+        && despues.ultimaOperacion.coleccion == coleccion
+        && despues.ultimaOperacion.tipo == 'ocupar'
+        && despues.ultimaOperacion.minutos == r.minutos;
+    }
+
+    function cambioLiberaAgenda(n, id, coleccion, r) {
+      let ruta = rutaAgendaDia(n, r.canchaId, r.dia);
+      let despues = getAfter(ruta).data;
+      return existsAfter(ruta)
+        && despues.ultimaOperacion.reservaId == id
+        && despues.ultimaOperacion.coleccion == coleccion
+        && despues.ultimaOperacion.tipo == 'liberar'
+        && despues.ultimaOperacion.minutos == r.minutos;
     }
 
     function altaPersonal(n, id, coleccion, r) {
-      return puede(n, 'reservas')
-        && r.estado == 'confirmada'
+      return identidadPersonal()
+        && puedeResolverCancha(n, r.canchaId)
         && r.origen == 'personal'
         && r.solicitanteUid == ''
         && r.creadoPor == request.auth.uid
-        && r.atendidoPor == request.auth.uid
-        && slotsCreados(n, id, coleccion, r);
+        && (r.duracion <= 180
+            && r.estado == 'confirmada'
+            && r.atendidoPor == request.auth.uid
+            && cambioOcupaAgenda(n, id, coleccion, r)
+          || r.duracion > 180
+            && coleccion == 'reservas'
+            && r.estado == 'pendiente'
+            && r.atendidoPor == '');
     }
 
     function altaPublica(n, id, coleccion, r) {
@@ -344,7 +364,6 @@ service cloud.firestore {
         && anonimo()
         && id.size() >= 10 && id.size() <= 102
         && id.matches('^r_[A-Za-z0-9_-]*$')
-        && r.estado == 'pendiente'
         && r.origen == 'publico'
         && r.solicitanteUid == request.auth.uid
         && r.creadoPor == request.auth.uid
@@ -354,51 +373,44 @@ service cloud.firestore {
         && r.adelantoCentimos == 0
         && r.inicio >= request.time - duration.value(5, 'm')
         && r.inicio <= request.time + duration.value(180, 'd')
-        && slotsCreados(n, id, coleccion, r);
+        && (r.duracion <= 180
+            && r.estado == 'confirmada'
+            && cambioOcupaAgenda(n, id, coleccion, r)
+          || r.duracion > 180
+            && r.estado == 'pendiente');
     }
 
     function reservaValida(n, id, coleccion) {
       let r = request.resource.data;
-      return camposReservaValidos(n, r, coleccion)
-        && diasValidos(r)
+      return id.size() > 0 && id.size() <= 128
+        && dentroHorario(n, r)
         && (altaPersonal(n, id, coleccion, r)
-          || altaPublica(n, id, coleccion, r));
+          || altaPublica(n, id, coleccion, r))
+        && camposReservaValidos(n, r, coleccion);
     }
 
-    function transicionValida(n) {
+    function transicionValida(n, id, coleccion) {
       let antes = resource.data;
       let ahora = request.resource.data;
-      return puede(n, 'reservas')
+      return antes.schemaVersion == 5
+        && puedeResolverCancha(n, antes.canchaId)
         && antes.estado in ['pendiente', 'confirmada']
-        && ahora.estado in ['confirmada', 'cancelada', 'no_asistio']
+        && ahora.estado in ['confirmada', 'rechazada', 'cancelada', 'no_asistio']
         && ahora.version == antes.version + 1
         && ahora.diff(antes).affectedKeys().hasOnly([
-          'estado', 'montoCentimos', 'adelantoCentimos', 'saldoCentimos',
-          'atendidoPor', 'updatedAt', 'version'
+          'estado', 'atendidoPor', 'updatedAt', 'version'
         ])
         && ahora.atendidoPor == request.auth.uid
-        && ahora.montoCentimos is int && ahora.montoCentimos >= 0
-        && montoNoBaja(antes, ahora)
-        && ahora.adelantoCentimos is int
-        && ahora.adelantoCentimos >= antes.adelantoCentimos
-        && ahora.adelantoCentimos <= ahora.montoCentimos
-        && ahora.saldoCentimos == ahora.montoCentimos - ahora.adelantoCentimos
-        && franjasCoherentes(n, antes, ahora);
-    }
-
-    // Cobrar nunca deja el monto anterior por debajo, y una reserva confirmada
-    // mantiene el monto que ya tenia. El emulador no admite if en las reglas.
-    function montoNoBaja(antes, ahora) {
-      return antes.estado == 'pendiente'
-          && ahora.montoCentimos >= antes.montoCentimos
-        || antes.estado == 'confirmada'
-          && ahora.montoCentimos == antes.montoCentimos;
-    }
-
-    // Cancelar libera las franjas; confirmar o registrar el ausente las deja.
-    function franjasCoherentes(n, antes, ahora) {
-      return ahora.estado == 'cancelada' && slotsLiberados(n, antes)
-        || ahora.estado != 'cancelada' && slotsPresentes(n, antes);
+        && (antes.estado == 'pendiente' && antes.duracion > 180
+            && (ahora.estado == 'confirmada'
+                && cambioOcupaAgenda(n, id, coleccion, ahora)
+              || ahora.estado == 'rechazada'
+                )
+          || antes.estado == 'confirmada'
+            && (ahora.estado == 'cancelada'
+                && cambioLiberaAgenda(n, id, coleccion, ahora)
+              || ahora.estado == 'no_asistio'
+                ));
     }
 
     // diff() solo admite mapas: hay que comparar .data con .data. Con snapshots
@@ -412,45 +424,102 @@ service cloud.firestore {
         ]);
     }
 
-    function slotCoincide(s, r, i, o) {
-      return slotBaseValido(s, r, i)
-        && s.year == o.year && s.month == o.month && s.day == o.day
-        && s.minute == o.minute && s.inicio == o.inicio;
+    function minutosOperacionValidos(minutos) {
+      let cantidad = minutos.size();
+      return minutos is list && cantidad >= 1 && cantidad <= 20
+        && minutos[0] is string
+        && minutos[0].matches('^(0|[1-9][0-9]{0,3})$')
+        && int(minutos[0]) >= 420 && int(minutos[0]) < 1500
+        && int(minutos[0]) % 30 == 0
+        && (cantidad < 2 || int(minutos[1]) == int(minutos[0]) + 30)
+        && (cantidad < 3 || int(minutos[2]) == int(minutos[0]) + 60)
+        && (cantidad < 4 || int(minutos[3]) == int(minutos[0]) + 90)
+        && (cantidad < 5 || int(minutos[4]) == int(minutos[0]) + 120)
+        && (cantidad < 6 || int(minutos[5]) == int(minutos[0]) + 150)
+        && (cantidad < 7 || int(minutos[6]) == int(minutos[0]) + 180)
+        && (cantidad < 8 || int(minutos[7]) == int(minutos[0]) + 210)
+        && (cantidad < 9 || int(minutos[8]) == int(minutos[0]) + 240)
+        && (cantidad < 10 || int(minutos[9]) == int(minutos[0]) + 270)
+        && (cantidad < 11 || int(minutos[10]) == int(minutos[0]) + 300)
+        && (cantidad < 12 || int(minutos[11]) == int(minutos[0]) + 330)
+        && (cantidad < 13 || int(minutos[12]) == int(minutos[0]) + 360)
+        && (cantidad < 14 || int(minutos[13]) == int(minutos[0]) + 390)
+        && (cantidad < 15 || int(minutos[14]) == int(minutos[0]) + 420)
+        && (cantidad < 16 || int(minutos[15]) == int(minutos[0]) + 450)
+        && (cantidad < 17 || int(minutos[16]) == int(minutos[0]) + 480)
+        && (cantidad < 18 || int(minutos[17]) == int(minutos[0]) + 510)
+        && (cantidad < 19 || int(minutos[18]) == int(minutos[0]) + 540)
+        && (cantidad < 20 || int(minutos[19]) == int(minutos[0]) + 570)
+        && int(minutos[cantidad - 1]) < 1500;
     }
 
-    function datosFranjaReserva(ruta, cancha, o) {
-      let d = getAfter(ruta).data;
-      return d.canchaId == cancha && d.slots.size() > o.indice;
+    function proyeccionCambiaIgual(n, cancha, dia, agendaAntes, agendaDespues) {
+      let ruta = rutaOcupacionPublica(n, cancha, dia);
+      let publicaDespues = getAfter(ruta).data;
+      return existsAfter(ruta)
+        && publicaDespues == {'ocupados': agendaDespues}
+        && (!exists(ruta)
+            && agendaAntes.size() == 0
+          || exists(ruta)
+            && publicaDespues.ocupados.diff(get(ruta).data.ocupados).affectedKeys()
+              == agendaDespues.diff(agendaAntes).affectedKeys());
     }
 
-    function franjaDeReserva(n, cancha, o) {
-      let ruta = /databases/$(database)/documents/negocios/$(n)/$(o.coleccion)/$(o.reservaId);
-      return !exists(ruta) && existsAfter(ruta) && datosFranjaReserva(ruta, cancha, o);
+    function agendaDiaValida(n, cancha, dia, antes) {
+      let d = request.resource.data;
+      let op = d.ultimaOperacion;
+      let ruta = /databases/$(database)/documents/negocios/$(n)/$(op.coleccion)/$(op.reservaId);
+      let r = getAfter(ruta).data;
+      let cambio = d.ocupados.diff(antes).affectedKeys();
+      return d is map && d.size() == 2
+        && d.ocupados is map && d.ocupados.size() <= 36
+        && d.ocupados.values().hasOnly([true])
+        && op is map && op.size() == 4
+        && op.reservaId is string && op.coleccion in ['reservas', 'bloqueos']
+        && op.tipo in ['ocupar', 'liberar']
+        && minutosOperacionValidos(op.minutos)
+        && op.minutos == r.minutos
+        && r.schemaVersion == 5 && r.canchaId == cancha && r.dia == dia
+        && cambio.hasOnly(op.minutos) && cambio.hasAll(op.minutos)
+        && proyeccionCambiaIgual(n, cancha, dia, antes, d.ocupados)
+        && (op.tipo == 'ocupar'
+            && r.estado == 'confirmada'
+            && !antes.keys().hasAny(op.minutos)
+            && d.ocupados.keys().hasAll(op.minutos)
+            && (!exists(ruta)
+                && r.duracion <= 180
+              || exists(ruta)
+                && get(ruta).data.estado == 'pendiente'
+                && get(ruta).data.version + 1 == r.version
+                && r.duracion > 180
+                && puedeResolverCancha(n, cancha))
+          || op.tipo == 'liberar'
+            && r.estado == 'cancelada'
+            && exists(ruta)
+            && get(ruta).data.estado == 'confirmada'
+            && puedeResolverCancha(n, cancha)
+            && antes.keys().hasAll(op.minutos)
+            && !d.ocupados.keys().hasAny(op.minutos));
     }
 
-    // La franja solo puede nacer junto a su reserva: sin esta comprobacion un
-    // cliente podria recrear la ocupacion de una reserva cancelada.
-    function ocupacionValida(n, cancha, year, month, day, minute) {
-      let o = request.resource.data;
-      return o.keys().hasOnly(['reservaId', 'coleccion', 'canchaId', 'year', 'month', 'day', 'minute', 'inicio', 'indice'])
-        && o.coleccion in ['reservas', 'bloqueos']
-        && o.reservaId is string
-        && o.reservaId.size() > 0 && o.reservaId.size() <= 128
-        && o.canchaId == cancha && o.year == year && o.month == month
-        && o.day == day && o.minute == minute && o.inicio is timestamp
-        && franjaDeReserva(n, cancha, o)
-        && slotCoincide(getAfter(
-          /databases/$(database)/documents/negocios/$(n)/$(o.coleccion)/$(o.reservaId)).data.slots[o.indice],
-          getAfter(/databases/$(database)/documents/negocios/$(n)/$(o.coleccion)/$(o.reservaId)).data,
-          o.indice, o);
+    function agendaCambiaIgual(n, cancha, dia, publicaAntes, publicaDespues) {
+      let ruta = rutaAgendaDia(n, cancha, dia);
+      let agendaDespues = getAfter(ruta).data.ocupados;
+      return existsAfter(ruta)
+        && publicaDespues == agendaDespues
+        && (!exists(ruta)
+            && publicaAntes.size() == 0
+          || exists(ruta)
+            && agendaDespues.diff(get(ruta).data.ocupados).affectedKeys()
+              == publicaDespues.diff(publicaAntes).affectedKeys());
     }
 
-    function liberaOcupacion(n) {
-      let o = resource.data;
-      let ruta = /databases/$(database)/documents/negocios/$(n)/$(o.coleccion)/$(o.reservaId);
-      return puede(n, 'reservas')
-        && existsAfter(ruta)
-        && getAfter(ruta).data.estado == 'cancelada';
+    function ocupacionPublicaValida(n, cancha, dia, antes) {
+      let d = request.resource.data;
+      return d.keys().hasOnly(['ocupados'])
+        && d.ocupados is map && d.ocupados.size() <= 36
+        && d.ocupados.values().hasOnly([true])
+        && agendaCambiaIgual(n, cancha, dia, antes, d.ocupados);
     }
 
     match /sistema/grass {
@@ -597,7 +666,7 @@ service cloud.firestore {
               || resource.data.solicitanteUid == request.auth.uid));
         allow list: if puede(n, 'agenda') && limite(1500);
         allow create: if reservaValida(n, id, 'reservas');
-        allow update: if transicionValida(n);
+        allow update: if transicionValida(n, id, 'reservas');
         allow delete: if false;
       }
 
@@ -605,16 +674,24 @@ service cloud.firestore {
         allow get: if puede(n, 'agenda');
         allow list: if puede(n, 'agenda') && limite(1500);
         allow create: if reservaValida(n, id, 'bloqueos');
-        allow update: if transicionValida(n);
+        allow update: if transicionValida(n, id, 'bloqueos');
         allow delete: if false;
       }
 
-      match /agenda/{cancha}/anios/{year}/meses/{month}/dias/{day}/franjas/{minute} {
-        allow read: if true;
-        allow create: if ocupacionValida(n, cancha, year, month, day, minute);
-        allow update: if false;
-        allow delete: if liberaOcupacion(n);
+      match /agenda/{cancha}/dias/{dia} {
+        allow read: if puede(n, 'agenda');
+        allow create: if agendaDiaValida(n, cancha, dia, {});
+        allow update: if agendaDiaValida(n, cancha, dia, resource.data.ocupados);
+        allow delete: if false;
       }
+    }
+
+    match /agenda_publica/{n}/canchas/{cancha}/dias/{dia} {
+      allow read: if true;
+      allow create: if ocupacionPublicaValida(n, cancha, dia, {});
+      allow update: if ocupacionPublicaValida(
+        n, cancha, dia, resource.data.ocupados);
+      allow delete: if false;
     }
 
     match /canchas_publicas/{id} {
@@ -694,8 +771,5 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    match /{document=**} {
-      allow read, write: if false;
-    }
   }
 }

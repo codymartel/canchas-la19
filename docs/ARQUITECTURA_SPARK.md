@@ -94,15 +94,16 @@ En emuladores se exigen las tres variables `FIRESTORE_EMULATOR_HOST`, `FIREBASE_
 
 ## Reservas y exclusividad
 
-Firestore es la autoridad definitiva. Panel y web compiten por el mismo documento por cada franja de treinta minutos:
+Firestore es la autoridad definitiva. Panel y web compiten por un documento diario privado y su proyeccion publica:
 
 ```text
-negocios/{negocio}/agenda/{cancha}/anios/{year}/meses/{month}/dias/{day}/franjas/{minute}
+negocios/{negocio}/agenda/{cancha}/dias/{dia}
+agenda_publica/{negocio}/canchas/{cancha}/dias/{dia}
 ```
 
-Una reserva contiene de una a ocho franjas, equivalentes a treinta minutos hasta cuatro horas. La operacion crea la reserva y todas las franjas en una transaccion. Las reglas vinculan cada franja con la reserva y exigen que todas existan. Cancelar cambia el estado y elimina todas las franjas en la misma operacion. Los componentes numericos de la ruta permiten validar cruces de medianoche sin dos claves para el mismo instante.
+Cada documento diario contiene un mapa `ocupados` con claves de treinta minutos. Los minutos posteriores a medianoche continúan en el mismo dia operativo como `1440`, `1470`, etc. Crear o cancelar una reserva confirmada cambia atomicamente la reserva, la agenda privada y la proyeccion publica.
 
-La web usa identidad anonima, crea solo reservas `pendiente`, no fija importes y no lee la coleccion privada. El panel confirma el importe y pago. Las franjas publicamente legibles solo exponen ocupacion, una clave aleatoria de reserva y coordenadas temporales; nunca nombre, telefono, cobros o UID del personal.
+La web usa identidad anonima y no lee la coleccion privada. Hasta tres horas se confirman y ocupan directamente; una solicitud mayor queda pendiente sin ocupar hasta que el empleado asignado la aprueba. La proyeccion publica contiene unicamente el mapa `ocupados`; nunca IDs de reserva, nombres, telefonos, pagos o UIDs.
 
 ## Limites de abuso publico
 
@@ -111,7 +112,7 @@ Las reglas validan forma, identidad, rango de fechas, cancha activa, horario, du
 - no hay limite confiable por IP;
 - una persona puede renovar identidades anonimas;
 - App Check reduce clientes casuales, pero no es una garantia anti-bot;
-- una solicitud pendiente ocupa sus franjas hasta que el personal la confirme o cancele;
+- una solicitud pendiente no ocupa agenda hasta que el personal asignado la aprueba;
 - deben monitorearse cuotas y solicitudes abusivas desde Console.
 
 No presentar estas reglas como proteccion equivalente a un backend con rate limiting y deteccion de fraude.
@@ -123,7 +124,7 @@ La web solo lee:
 - `negocios_publicos/grass-sintetico`;
 - `canchas_publicas/*` activas;
 - `promociones_publicas/*` activas;
-- documentos sanitizados de franjas ocupadas.
+- `agenda_publica/{negocio}/canchas/{cancha}/dias/{dia}`.
 
 La ficha privada, clientes, telefonos, pagos, empleados y reservas completas no son enumerables por una identidad publica.
 
@@ -133,6 +134,25 @@ El modelo publico reserva `galeria` y su orden. La interfaz muestra la capacidad
 
 Para habilitarla se necesita un mecanismo de firma confiable que entregue parametros Cloudinary de corta duracion. No guardar `api_secret` ni secretos equivalentes en Flutter, JavaScript publico o Firestore.
 
+## Reserva publica
+
+La web publicada mantiene el formulario deshabilitado hasta una activacion deliberada. El limite de mil expresiones es un limite oficial de Firestore Security Rules por request, no una particularidad del emulador.
+
+La agenda diaria espejada evita una lectura por franja y no publica identificadores privados. Las 55 pruebas de reglas activas y las 20 pruebas del prototipo cubren duraciones de 30 a 600 minutos, cruce de medianoche, tres canchas, concurrencia, privacidad, ataques, aprobacion y cancelacion sin agotar mil expresiones.
+
+Mientras siga abierto el bloqueo:
+
+- `web/public/firebase-config.js` mantiene `GRASS_RESERVAS_HABILITADAS = false`;
+- la web oculta el formulario, deshabilita todos sus controles y rechaza el envio incluso si se dispara a mano, aunque existan canchas publicas;
+- solo se publico `hosting:publica`. No se desplegaron reglas ni datos de ejemplo.
+- la agenda privada no debe usarse como fuente publica porque `ultimaOperacion` contiene el ID de reserva.
+
+Para desactivar el bloqueo, en este orden:
+
+1. verificar datos y reglas reales con herramientas de solo lectura;
+2. comprobar web y panel contra emuladores y luego en un entorno controlado;
+3. activar deliberadamente `GRASS_RESERVAS_HABILITADAS`.
+
 ## Corte de datos existente
 
-El esquema canonico es `schemaVersion: 3`. Antes de un despliegue real se debe hacer una operacion separada y revisada para inventariar y migrar reservas antiguas (`slots` de Functions y `agenda` version 2), detectar conflictos y respaldar datos. Este trabajo no lee ni modifica datos de produccion.
+El esquema canonico es `schemaVersion: 5`. Antes de un despliegue real se debe hacer una operacion separada y revisada para inventariar y migrar reservas antiguas y sus agendas por franja, detectar conflictos y respaldar datos. Este trabajo no lee ni modifica datos de produccion.

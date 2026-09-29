@@ -100,6 +100,15 @@ void main() {
         ),
       ),
     );
+    when(() => repo.observarOcupacion(any(), any())).thenAnswer(
+      (_) => Stream.value(
+        const LecturaOcupacion(
+          minutos: {},
+          desdeCache: false,
+          pendientes: false,
+        ),
+      ),
+    );
     provider = AgendaProvider(repo);
   });
   tearDown(() => provider.dispose());
@@ -205,8 +214,7 @@ void main() {
           reservas: [
             Reserva('r1', {
               'dia': '2026-09-26',
-              'dias': ['2026-09-26'],
-              'slots': [],
+              'minutos': ['600', '630'],
               'minuto': 600,
               'duracion': 60,
               'sedeId': 'la-19',

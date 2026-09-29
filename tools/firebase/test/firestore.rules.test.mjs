@@ -10,6 +10,7 @@ import {
 import {
   Timestamp,
   collection,
+  deleteField,
   deleteDoc,
   doc,
   getDoc,
@@ -83,10 +84,10 @@ function canonicalSlots(day, minute, duration) {
     const millis = start + index * 30 * 60 * 1000;
     const local = new Date(millis - LIMA_OFFSET_MS);
     const year = String(local.getUTCFullYear());
-    const month = String(local.getUTCMonth() + 1);
-    const date = String(local.getUTCDate());
+    const month = String(local.getUTCMonth() + 1).padStart(2, '0');
+    const date = String(local.getUTCDate()).padStart(2, '0');
     return {
-      dia: `${year}-${month.padStart(2, '0')}-${date.padStart(2, '0')}`,
+      dia: `${year}-${month}-${date}`,
       year,
       month,
       day: date,
@@ -100,30 +101,22 @@ function slotDay(slot) {
   return slot.dia;
 }
 
-function slotRef(db, court, slot) {
+function agendaRef(db, booking) {
   return doc(
-    db,
-    'negocios', BUSINESS,
-    'agenda', court,
-    'anios', slot.year,
-    'meses', slot.month,
-    'dias', slot.day,
-    'franjas', slot.minute,
+    db, 'negocios', BUSINESS, 'agenda', booking.body.canchaId,
+    'dias', booking.body.dia,
   );
 }
 
-function slotData(booking, slot, index) {
-  return {
-    reservaId: booking.id,
-    coleccion: booking.collectionName,
-    canchaId: booking.body.canchaId,
-    year: slot.year,
-    month: slot.month,
-    day: slot.day,
-    minute: slot.minute,
-    inicio: slot.inicio,
-    indice: index,
-  };
+function publicSlotRef(db, booking) {
+  return doc(
+    db, 'agenda_publica', BUSINESS, 'canchas', booking.body.canchaId,
+    'dias', booking.body.dia,
+  );
+}
+
+function operationalMinutes(booking) {
+  return booking.slots.map((_, index) => String(booking.body.minuto + index * 30));
 }
 
 function makeBooking(db, {
@@ -138,35 +131,55 @@ function makeBooking(db, {
   patch = {},
 } = {}) {
   const slots = canonicalSlots(day, minute, duration);
+  const segmentos = [];
+  for (const slot of slots) {
+    const ultimo = segmentos.at(-1);
+    if (ultimo?.dia === slot.dia) {
+      ultimo.cantidad += 1;
+    } else {
+      segmentos.push({
+        dia: slot.dia,
+        year: slot.year,
+        month: slot.month,
+        day: slot.day,
+        minuto: slot.minute,
+        cantidad: 1,
+      });
+    }
+  }
   const collectionName = block ? 'bloqueos' : 'reservas';
-  const amount = publicRequest || block ? 0 : 5000;
   const now = Timestamp.now();
   const body = {
-    schemaVersion: 3,
+    schemaVersion: 5,
     negocioId: BUSINESS,
     sedeId: court,
     canchaId: court,
     dia: day,
-    dias: [...new Set(slots.map(slotDay))],
+    jornada: {
+      year: day.slice(0, 4),
+      month: day.slice(5, 7),
+      day: day.slice(8, 10),
+    },
     minuto: minute,
     duracion: duration,
+    minutos: slots.map((_, index) => String(minute + index * 30)),
     inicio: slots[0].inicio,
     fin: Timestamp.fromMillis(slots[0].inicio.toMillis() + duration * 60 * 1000),
-    slots,
-    estado: publicRequest ? 'pendiente' : 'confirmada',
+    estado: duration > 180 ? 'pendiente' : 'confirmada',
     bloqueo: block,
-    clienteId: publicRequest || block ? '' : 'cliente-1',
+    clienteId: '',
     clienteNombre: block ? 'Mantenimiento' : 'Cliente privado',
     telefono: block ? '' : '+51999888777',
-    montoCentimos: amount,
+    montoCentimos: 0,
     adelantoCentimos: 0,
-    saldoCentimos: amount,
-    metodoPago: 'efectivo',
+    saldoCentimos: 0,
+    metodoPago: '',
     promocionId: '',
+    historialPagos: [],
     origen: publicRequest ? 'publico' : 'personal',
     solicitanteUid: publicRequest ? uid : '',
     creadoPor: uid,
-    atendidoPor: publicRequest ? '' : uid,
+    atendidoPor: duration > 180 || publicRequest ? '' : uid,
     createdAt: now,
     updatedAt: now,
     version: 1,
@@ -177,15 +190,27 @@ function makeBooking(db, {
     collectionName,
     ref: doc(db, 'negocios', BUSINESS, collectionName, id),
     body,
+    slots,
   };
 }
 
-function bookingBatch(db, booking, slotIndexes = booking.body.slots.map((_, index) => index)) {
+function bookingBatch(db, booking, slotIndexes = booking.slots.map((_, index) => index)) {
   const batch = writeBatch(db);
   batch.set(booking.ref, booking.body);
-  for (const index of slotIndexes) {
-    const slot = booking.body.slots[index];
-    batch.set(slotRef(db, booking.body.canchaId, slot), slotData(booking, slot, index));
+  if (booking.body.estado === 'confirmada') {
+    const minutos = operationalMinutes(booking).filter((_, index) => slotIndexes.includes(index));
+    batch.set(agendaRef(db, booking), {
+      ocupados: Object.fromEntries(minutos.map(minuto => [minuto, true])),
+      ultimaOperacion: {
+        reservaId: booking.id,
+        coleccion: booking.collectionName,
+        tipo: 'ocupar',
+        minutos,
+      },
+    }, { merge: true });
+    batch.set(publicSlotRef(db, booking), {
+      ocupados: Object.fromEntries(minutos.map(minuto => [minuto, true])),
+    }, { merge: true });
   }
   return batch;
 }
@@ -204,7 +229,7 @@ function promotionBatch(db, id, contenido) {
   return batch;
 }
 
-function cancellationBatch(db, booking, actor, slotIndexes = booking.body.slots.map((_, index) => index)) {
+function cancellationBatch(db, booking, actor, slotIndexes = booking.slots.map((_, index) => index)) {
   const batch = writeBatch(db);
   batch.update(booking.ref, {
     estado: 'cancelada',
@@ -212,9 +237,43 @@ function cancellationBatch(db, booking, actor, slotIndexes = booking.body.slots.
     updatedAt: Timestamp.now(),
     version: booking.body.version + 1,
   });
-  for (const index of slotIndexes) {
-    batch.delete(slotRef(db, booking.body.canchaId, booking.body.slots[index]));
-  }
+  const minutos = operationalMinutes(booking).filter((_, index) => slotIndexes.includes(index));
+  batch.set(agendaRef(db, booking), {
+    ocupados: Object.fromEntries(minutos.map(minuto => [minuto, deleteField()])),
+    ultimaOperacion: {
+      reservaId: booking.id,
+      coleccion: booking.collectionName,
+      tipo: 'liberar',
+      minutos,
+    },
+  }, { merge: true });
+  batch.set(publicSlotRef(db, booking), {
+    ocupados: Object.fromEntries(minutos.map(minuto => [minuto, deleteField()])),
+  }, { merge: true });
+  return batch;
+}
+
+function approvalBatch(db, booking, actor) {
+  const batch = writeBatch(db);
+  const minutos = operationalMinutes(booking);
+  batch.update(booking.ref, {
+    estado: 'confirmada',
+    atendidoPor: actor,
+    updatedAt: Timestamp.now(),
+    version: booking.body.version + 1,
+  });
+  batch.set(agendaRef(db, booking), {
+    ocupados: Object.fromEntries(minutos.map(minuto => [minuto, true])),
+    ultimaOperacion: {
+      reservaId: booking.id,
+      coleccion: booking.collectionName,
+      tipo: 'ocupar',
+      minutos,
+    },
+  }, { merge: true });
+  batch.set(publicSlotRef(db, booking), {
+    ocupados: Object.fromEntries(minutos.map(minuto => [minuto, true])),
+  }, { merge: true });
   return batch;
 }
 
@@ -258,8 +317,8 @@ async function seedApplication() {
       propietarioUid: ADMIN,
       nombreNegocio: 'Grass Sintetico',
       preparado: true,
-      aperturaMinuto: 0,
-      cierreMinuto: 1440,
+      aperturaMinuto: 420,
+      cierreMinuto: 60,
       duracionTurnoMinutos: 30,
     });
     for (const id of ['la-19', 'la-23', 'la-24']) {
@@ -339,8 +398,8 @@ async function seedPublicProjections() {
       nombre: 'Grass Sintetico',
       descripcion: 'Informacion publica',
       galeria: [],
-      aperturaMinuto: 0,
-      cierreMinuto: 1440,
+      aperturaMinuto: 420,
+      cierreMinuto: 60,
       duracionTurnoMinutos: 30,
     });
     await batch.commit();
@@ -359,12 +418,6 @@ async function seedBooking(booking) {
 }
 
 const tests = [];
-// `limiteEmulador` marca pruebas que el emulador local no puede evaluar: el
-// motor de reglas aborta con "maximum of 1000 expressions to evaluate has been
-// reached" en cuanto una reserva ocupa dos o mas slots. No es un defecto de las
-// reglas ni del producto: el limite existe solo en el emulador. La prueba se
-// conserva y debe verificarse contra Firestore real.
-const limiteEmulador = 'el emulador aborta al superar 1000 expresiones (2+ slots)';
 const test = (name, run, motivo) => tests.push([name, run, motivo]);
 
 test('el ancla es inmutable y solo el administrador verificado completa la configuracion', async () => {
@@ -522,7 +575,7 @@ test('permisos de empleado y escrituras maliciosas no escalan privilegios', asyn
   await assertFails(bookingBatch(employee, forged).commit());
 });
 
-test('una solicitud publica anonima crea una reserva pendiente con slots canonicos', async () => {
+test('una reserva publica directa guarda segmentos canonicos y datos privados', async () => {
   await seedApplication();
   const db = anonymous(ANON_A).firestore();
   const booking = makeBooking(db, {
@@ -533,14 +586,14 @@ test('una solicitud publica anonima crea una reserva pendiente con slots canonic
   });
   await assertSucceeds(bookingBatch(db, booking).commit());
   const stored = (await getDoc(booking.ref)).data();
-  assert.equal(stored.schemaVersion, 3);
-  assert.equal(stored.estado, 'pendiente');
+  assert.equal(stored.schemaVersion, 5);
+  assert.equal(stored.estado, 'confirmada');
   assert.equal(stored.solicitanteUid, ANON_A);
-  assert.equal(typeof stored.slots[0].year, 'string');
-  assert.equal(typeof stored.slots[0].month, 'string');
-  assert.equal(typeof stored.slots[0].day, 'string');
-  assert.equal(typeof stored.slots[0].minute, 'string');
-  assert.ok(stored.slots[0].inicio instanceof Timestamp);
+  assert.equal(stored.clienteNombre, 'Cliente privado');
+  assert.equal(stored.telefono, '+51999888777');
+  assert.equal(stored.metodoPago, '');
+  assert.deepEqual(stored.minutos, ['600']);
+  assert.ok(stored.inicio instanceof Timestamp);
 
   const extra = makeBooking(db, {
     id: 'r_publica_extra01',
@@ -551,6 +604,51 @@ test('una solicitud publica anonima crea una reserva pendiente con slots canonic
     patch: { notaPrivada: 'campo no autorizado' },
   });
   await assertFails(bookingBatch(db, extra).commit());
+
+  const pagoInventado = makeBooking(db, {
+    id: 'r_publica_pago001',
+    uid: ANON_A,
+    publicRequest: true,
+    duration: 30,
+    minute: 690,
+    patch: { metodoPago: 'efectivo' },
+  });
+  await assertFails(bookingBatch(db, pagoInventado).commit());
+
+  const montoInventado = makeBooking(db, {
+    id: 'r_publica_monto01',
+    uid: ANON_A,
+    publicRequest: true,
+    duration: 30,
+    minute: 720,
+    patch: { montoCentimos: 1000, saldoCentimos: 1000 },
+  });
+  await assertFails(bookingBatch(db, montoInventado).commit());
+});
+
+test('el personal conserva nombre y telefono sin inventar precio ni pago', async () => {
+  await seedApplication();
+  const db = verified(EMPLOYEE).firestore();
+  const booking = makeBooking(db, {
+    id: 'personal-minima',
+    uid: EMPLOYEE,
+    duration: 30,
+    patch: {
+      clienteId: '',
+      telefono: '+51999888777',
+      montoCentimos: 0,
+      adelantoCentimos: 0,
+      saldoCentimos: 0,
+      metodoPago: '',
+    },
+  });
+  await assertSucceeds(bookingBatch(db, booking).commit());
+  const stored = (await getDoc(booking.ref)).data();
+  assert.equal(stored.clienteNombre, 'Cliente privado');
+  assert.equal(stored.clienteId, '');
+  assert.equal(stored.telefono, '+51999888777');
+  assert.equal(stored.montoCentimos, 0);
+  assert.equal(stored.metodoPago, '');
 });
 
 test('los datos de reservas son privados incluso para otros solicitantes publicos', async () => {
@@ -609,6 +707,91 @@ test('las proyecciones publicas exponen solo activos y no filtran datos privados
   }));
 });
 
+test('la agenda publica solo expone ocupado y no puede fabricarse ni liberarse', async () => {
+  await seedApplication();
+  const employee = verified(EMPLOYEE).firestore();
+  const attacker = anonymous(ANON_B).firestore();
+  const publicDb = environment.unauthenticatedContext().firestore();
+  const booking = makeBooking(employee, {
+    id: 'proyeccion-minima', uid: EMPLOYEE, duration: 60,
+  });
+  await assertSucceeds(bookingBatch(employee, booking).commit());
+
+  const privateRef = agendaRef(publicDb, booking);
+  const publicRef = publicSlotRef(publicDb, booking);
+  await assertFails(getDoc(privateRef));
+  const visible = (await assertSucceeds(getDoc(publicRef))).data();
+  assert.deepEqual(visible, { ocupados: { '600': true, '630': true } });
+
+  const free = makeBooking(attacker, {
+    id: 'proyeccion-falsa', uid: ANON_B, minute: 900, duration: 30,
+  });
+  await assertFails(setDoc(publicSlotRef(attacker, free), { ocupado: true }));
+  await assertFails(setDoc(publicSlotRef(attacker, free), {
+    ocupado: true,
+    reservaId: 'dato-interno',
+  }));
+  await assertFails(deleteDoc(publicSlotRef(attacker, booking)));
+  await assertFails(deleteDoc(publicSlotRef(employee, booking)));
+});
+
+for (const duration of [30, 60, 90, 120, 150, 180, 210, 240, 300, 360, 420, 480, 540, 600]) {
+  test(`el personal reserva ${duration} minutos dentro de los limites`, async () => {
+    await seedApplication();
+    const employee = verified(EMPLOYEE).firestore();
+    const personal = makeBooking(employee, {
+      id: `duracion-personal-${duration}`,
+      uid: EMPLOYEE,
+      duration,
+    });
+    await assertSucceeds(bookingBatch(employee, personal).commit());
+    assert.equal(personal.body.estado, duration <= 180 ? 'confirmada' : 'pendiente');
+  });
+
+  test(`el publico reserva ${duration} minutos dentro de los limites`, async () => {
+    await seedApplication();
+    const publicDb = anonymous(ANON_A).firestore();
+    const publica = makeBooking(publicDb, {
+      id: `r_duracion_publica_${duration}`,
+      uid: ANON_A,
+      publicRequest: true,
+      duration,
+    });
+    await assertSucceeds(bookingBatch(publicDb, publica).commit());
+    assert.equal(publica.body.estado, duration <= 180 ? 'confirmada' : 'pendiente');
+  });
+}
+
+test('solo el empleado asignado aprueba una solicitud larga tras comprobar disponibilidad', async () => {
+  await seedApplication();
+  const requester = anonymous(ANON_A).firestore();
+  const unassigned = verified(EMPLOYEE).firestore();
+  const booking = makeBooking(requester, {
+    id: 'r_aprobacion_larga_01',
+    uid: ANON_A,
+    publicRequest: true,
+    court: 'la-23',
+    duration: 240,
+  });
+  await assertSucceeds(bookingBatch(requester, booking).commit());
+  assert.equal((await getDoc(publicSlotRef(requester, booking))).exists(), false);
+
+  const deniedBooking = {
+    ...booking,
+    ref: doc(unassigned, 'negocios', BUSINESS, 'reservas', booking.id),
+  };
+  await assertFails(approvalBatch(unassigned, deniedBooking, EMPLOYEE).commit());
+
+  const admin = verified(ADMIN).firestore();
+  const approvedBooking = {
+    ...booking,
+    ref: doc(admin, 'negocios', BUSINESS, 'reservas', booking.id),
+  };
+  await assertSucceeds(approvalBatch(admin, approvedBooking, ADMIN).commit());
+  const visible = (await getDoc(publicSlotRef(requester, booking))).data();
+  assert.equal(visible.ocupados['600'], true);
+});
+
 test('reserva y slots estan completamente acoplados en ambas direcciones', async () => {
   await seedApplication();
   const db = verified(EMPLOYEE).firestore();
@@ -621,19 +804,29 @@ test('reserva y slots estan completamente acoplados en ambas direcciones', async
 
   const orphan = makeBooking(db, { id: 'slot-huerfano', uid: EMPLOYEE, minute: 720 });
   await assertFails(setDoc(
-    slotRef(db, COURT, orphan.body.slots[0]),
-    slotData(orphan, orphan.body.slots[0], 0),
+    agendaRef(db, orphan),
+    {
+      ocupados: { '720': true, '750': true },
+      ultimaOperacion: {
+        reservaId: orphan.id,
+        coleccion: orphan.collectionName,
+        tipo: 'ocupar',
+        minutos: ['720', '750'],
+      },
+    },
   ));
 
   const numericMap = makeBooking(db, { id: 'mapa-no-canonico', uid: EMPLOYEE, minute: 780 });
-  const canonicalRefs = numericMap.body.slots.map((slot) => slotRef(db, COURT, slot));
-  numericMap.body.slots[0] = { ...numericMap.body.slots[0], minute: 780 };
-  const malformedBatch = writeBatch(db);
-  malformedBatch.set(numericMap.ref, numericMap.body);
-  for (let index = 0; index < numericMap.body.slots.length; index += 1) {
-    malformedBatch.set(canonicalRefs[index], slotData(numericMap, numericMap.body.slots[index], index));
-  }
-  await assertFails(malformedBatch.commit());
+  numericMap.body.minutos[0] = 780;
+  await assertFails(bookingBatch(db, numericMap).commit());
+
+  const wrongDay = makeBooking(db, { id: 'dia-no-canonico', uid: EMPLOYEE, minute: 810 });
+  wrongDay.body.dia = '2099-01-01';
+  await assertFails(bookingBatch(db, wrongDay).commit());
+
+  const wrongMinute = makeBooking(db, { id: 'minuto-no-canonico', uid: EMPLOYEE, minute: 870 });
+  wrongMinute.body.minuto = 900;
+  await assertFails(bookingBatch(db, wrongMinute).commit());
 
   const complete = makeBooking(db, {
     id: 'acoplamiento-completo',
@@ -642,9 +835,8 @@ test('reserva y slots estan completamente acoplados en ambas direcciones', async
     duration: 30,
   });
   await assertSucceeds(bookingBatch(db, complete).commit());
-  for (const slot of complete.body.slots) {
-    assert.equal((await getDoc(slotRef(db, COURT, slot))).exists(), true);
-  }
+  const agendaCompleta = (await getDoc(agendaRef(db, complete))).data();
+  assert.equal(agendaCompleta.ocupados['840'], true);
 });
 
 test('admin, empleado y publico compitiendo por el mismo slot dejan exactamente un ganador', async () => {
@@ -672,8 +864,7 @@ test('admin, empleado y publico compitiendo por el mismo slot dejan exactamente 
     limit(1500),
   ));
   assert.equal(reservations.size, 1);
-  const occupied = contenders[0][1].body.slots[0];
-  assert.equal((await getDoc(slotRef(admin, COURT, occupied))).exists(), true);
+  assert.equal((await getDoc(agendaRef(admin, contenders[0][1]))).exists(), true);
 });
 
 test('dos reservas adyacentes de 30 minutos pueden coexistir', async () => {
@@ -683,20 +874,21 @@ test('dos reservas adyacentes de 30 minutos pueden coexistir', async () => {
   const second = makeBooking(db, { id: 'adyacente-b', uid: EMPLOYEE, minute: 630, duration: 30 });
   await assertSucceeds(bookingBatch(db, first).commit());
   await assertSucceeds(bookingBatch(db, second).commit());
-  assert.equal((await getDoc(slotRef(db, COURT, first.body.slots[0]))).exists(), true);
-  assert.equal((await getDoc(slotRef(db, COURT, second.body.slots[0]))).exists(), true);
+  const agenda = (await getDoc(agendaRef(db, first))).data();
+  assert.equal(agenda.ocupados['600'], true);
+  assert.equal(agenda.ocupados['630'], true);
 });
 
-test('una reserva de cuatro horas crea exactamente ocho slots', async () => {
+test('una solicitud de cuatro horas queda pendiente y no ocupa agenda', async () => {
   await seedApplication();
   const db = verified(ADMIN).firestore();
   const booking = makeBooking(db, { id: 'cuatro-horas', uid: ADMIN, minute: 600, duration: 240 });
-  assert.equal(booking.body.slots.length, 8);
+  assert.equal(booking.slots.length, 8);
+  assert.equal(booking.body.estado, 'pendiente');
   await assertSucceeds(bookingBatch(db, booking).commit());
-  for (const slot of booking.body.slots) {
-    assert.equal((await getDoc(slotRef(db, COURT, slot))).exists(), true);
-  }
-}, limiteEmulador);
+  assert.equal((await getDoc(agendaRef(db, booking))).exists(), false);
+  assert.equal((await getDoc(publicSlotRef(db, booking))).exists(), false);
+});
 
 test('una reserva que cruza medianoche usa el dia y minuto canonicos siguientes', async () => {
   await seedApplication();
@@ -714,14 +906,15 @@ test('una reserva que cruza medianoche usa el dia y minuto canonicos siguientes'
     minute: 1410,
     duration: 90,
   });
-  assert.deepEqual(booking.body.slots.map(({ minute }) => minute), ['1410', '0', '30']);
-  assert.equal(booking.body.dias.length, 2);
-  assert.notEqual(booking.body.slots[0].day, booking.body.slots[1].day);
+  assert.deepEqual(booking.slots.map(({ minute }) => minute), ['1410', '0', '30']);
+  assert.equal(booking.body.minutos.length, 3);
+  assert.notEqual(booking.slots[0].day, booking.slots[1].day);
   await assertSucceeds(bookingBatch(db, booking).commit());
-  for (const slot of booking.body.slots) {
-    assert.equal((await getDoc(slotRef(db, COURT, slot))).exists(), true);
-  }
-}, limiteEmulador);
+  const agenda = (await getDoc(agendaRef(db, booking))).data();
+  assert.equal(agenda.ocupados['1410'], true);
+  assert.equal(agenda.ocupados['1440'], true);
+  assert.equal(agenda.ocupados['1470'], true);
+});
 
 test('cancelar libera todos los slots atomicamente y permite reutilizarlos', async () => {
   await seedApplication();
@@ -740,10 +933,12 @@ test('cancelar libera todos los slots atomicamente y permite reutilizarlos', asy
   }));
   await assertFails(cancellationBatch(db, booking, EMPLOYEE, [0, 1]).commit());
   await assertSucceeds(cancellationBatch(db, booking, EMPLOYEE).commit());
-  for (const slot of booking.body.slots) {
-    assert.equal((await getDoc(slotRef(db, COURT, slot))).exists(), false);
+  const agendaCancelada = (await getDoc(agendaRef(db, booking))).data();
+  for (const minuto of operationalMinutes(booking)) {
+    assert.equal(minuto in agendaCancelada.ocupados, false);
   }
-  for (let index = 0; index < booking.body.slots.length; index += 1) {
+  assert.deepEqual((await getDoc(publicSlotRef(db, booking))).data(), { ocupados: {} });
+  for (let index = 0; index < booking.slots.length; index += 1) {
     const retry = makeBooking(db, {
       id: `reintento-tras-cancelar-${index}`,
       uid: EMPLOYEE,
@@ -808,7 +1003,7 @@ test('sin horario global configurado ninguna cancha admite reservas', async () =
 
 test('el horario global se aplica igual a las tres canchas', async () => {
   await seedApplication();
-  const db = verified(EMPLOYEE).firestore();
+  const db = verified(ADMIN).firestore();
   // Turno de 90 minutos: solo caben inicios alineados a 90 desde la apertura.
   await environment.withSecurityRulesDisabled(async (context) => {
     const admin = context.firestore();
@@ -820,16 +1015,59 @@ test('el horario global se aplica igual a las tres canchas', async () => {
   });
   for (const court of ['la-19', 'la-23', 'la-24']) {
     const desalineado = makeBooking(db, {
-      id: `desalineado-${court}`, uid: EMPLOYEE, court, minute: 420, duration: 90,
+      id: `desalineado-${court}`, uid: ADMIN, court, minute: 420, duration: 90,
     });
     await assertFails(bookingBatch(db, desalineado).commit(), court);
 
     const alineado = makeBooking(db, {
-      id: `alineado-${court}`, uid: EMPLOYEE, court, minute: 450, duration: 90,
+      id: `alineado-${court}`, uid: ADMIN, court, minute: 450, duration: 90,
     });
     await assertSucceeds(bookingBatch(db, alineado).commit(), court);
   }
-}, limiteEmulador);
+});
+
+test('el horario comun de 07:00 a 01:00 incluye la madrugada y excluye sus bordes', async () => {
+  await seedApplication();
+  const db = verified(ADMIN).firestore();
+  await environment.withSecurityRulesDisabled(async (context) => {
+    await updateDoc(doc(context.firestore(), 'negocios', BUSINESS), {
+      aperturaMinuto: 420,
+      cierreMinuto: 60,
+      duracionTurnoMinutos: 60,
+    });
+  });
+
+  const apertura = makeBooking(db, {
+    id: 'horario-apertura', uid: ADMIN, minute: 420, duration: 60,
+  });
+  await assertSucceeds(bookingBatch(db, apertura).commit());
+
+  const madrugada = makeBooking(db, {
+    id: 'horario-madrugada', uid: ADMIN, minute: 1440, duration: 60,
+  });
+  await assertSucceeds(bookingBatch(db, madrugada).commit());
+
+  const cruza = makeBooking(db, {
+    id: 'horario-cruza-dia', uid: ADMIN, court: 'la-23', minute: 1380, duration: 120,
+  });
+  await assertSucceeds(bookingBatch(db, cruza).commit());
+  assert.equal(cruza.body.minutos.length, 4);
+
+  const antes = makeBooking(db, {
+    id: 'horario-antes', uid: ADMIN, minute: 360, duration: 60,
+  });
+  await assertFails(bookingBatch(db, antes).commit());
+
+  const cierre = makeBooking(db, {
+    id: 'horario-cierre', uid: ADMIN, minute: 1500, duration: 60,
+  });
+  await assertFails(bookingBatch(db, cierre).commit());
+
+  const mediaFranja = makeBooking(db, {
+    id: 'horario-media-franja', uid: ADMIN, minute: 450, duration: 60,
+  });
+  await assertFails(bookingBatch(db, mediaFranja).commit());
+});
 
 test('el horario global solo lo cambia el administrador y queda sincronizado', async () => {
   await seedApplication();
@@ -908,6 +1146,6 @@ for (const [name, run, motivo] of tests) {
 await environment.cleanup();
 console.log(failures
   ? `\n${failures} prueba(s) fallaron de ${tests.length - skipped}.`
-  : `\n${tests.length - skipped} pruebas de reglas schemaVersion 3 OK`
+  : `\n${tests.length - skipped} pruebas de reglas schemaVersion 5 OK`
     + (skipped ? `, ${skipped} omitidas en emulador.` : '.'));
 process.exit(failures ? 1 : 0);

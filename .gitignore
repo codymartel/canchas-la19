@@ -4,3 +4,4 @@ node_modules/
 .env*
 !*.example
 *-service-account.json
+mobile/test/features/empleados/capturas/*.png

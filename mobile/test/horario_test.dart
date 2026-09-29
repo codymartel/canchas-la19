@@ -3,7 +3,7 @@ import 'package:mobile/core/domain/formatos.dart';
 import 'package:mobile/core/domain/negocio.dart';
 
 const horarioDia = HorarioNegocio(
-  apertura: 360,
+  apertura: 420,
   cierre: 1440,
   duracionTurno: 60,
 );
@@ -76,11 +76,11 @@ void main() {
       },
     );
 
-    test('turno de 60 minutos cubre de 06:00 a 24:00', () {
+    test('turno de 60 minutos cubre de 07:00 a 24:00', () {
       final inicios = iniciosDeTurno(horario: horarioDia, duracion: 60);
-      expect(inicios.first, 360);
+      expect(inicios.first, 420);
       expect(inicios.last, 1380);
-      expect(inicios.length, 18);
+      expect(inicios.length, 17);
     });
 
     test('la duracion debe ser multiplo del turno base', () {
@@ -100,14 +100,16 @@ void main() {
       final inicios = iniciosDeTurno(horario: horarioNocturno, duracion: 60);
       expect(inicios, contains(1020));
       expect(inicios, contains(1140));
-      expect(inicios, contains(60));
-      expect(inicios, contains(0));
+      expect(inicios, contains(1440));
+      expect(inicios, isNot(contains(0)));
       expect(inicios, isNot(contains(390)), reason: 'no abre de dia');
       expect(inicios.last + 60, lessThanOrEqualTo(1440 + 120));
       for (final inicio in inicios) {
-        if (inicio < 120) {
-          expect(inicio % horarioNocturno.duracionTurno, 0);
-        }
+        expect(
+          (inicio - horarioNocturno.apertura + 1440) %
+              horarioNocturno.duracionTurno,
+          0,
+        );
       }
     });
 

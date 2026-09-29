@@ -46,7 +46,7 @@ await db.doc('sistema/grass').set({
 // El horario es del negocio y es el mismo para las tres canchas.
 const horario = {
   aperturaMinuto: 420,
-  cierreMinuto: 1440,
+  cierreMinuto: 60,
   duracionTurnoMinutos: 60,
 };
 
@@ -146,49 +146,36 @@ const diaLocal = (offsetDias = 0) => {
   return `${fecha.getUTCFullYear()}-${dos(fecha.getUTCMonth() + 1)}-${dos(fecha.getUTCDate())}`;
 };
 
-function franjas(dia, minuto, duracion) {
-  const [anio, mes, numero] = dia.split('-').map(Number);
-  const instante = new Date(Date.UTC(anio, mes - 1, numero, 5, 0) + minuto * 60 * 1000);
-  return Array.from({ length: duracion / 30 }, (_, indice) => {
-    const local = new Date(instante.getTime() + indice * 30 * 60 * 1000 - LIMA_MINUTOS * 60 * 1000);
-    const dos = (n) => String(n).padStart(2, '0');
-    return {
-      dia: `${local.getUTCFullYear()}-${dos(local.getUTCMonth() + 1)}-${dos(local.getUTCDate())}`,
-      year: String(local.getUTCFullYear()),
-      month: String(local.getUTCMonth() + 1),
-      day: String(local.getUTCDate()),
-      minute: String(local.getUTCHours() * 60 + local.getUTCMinutes()),
-      inicio: Timestamp.fromMillis(instante.getTime() + indice * 30 * 60 * 1000),
-    };
-  });
-}
-
-async function reserva({ clave, cancha, dia, minuto, duracion, estado, origen, nombre, telefono, monto, adelanto, metodoPago, solicitanteUid }) {
+async function reserva({ clave, cancha, dia, minuto, duracion, estado, origen, nombre, telefono, solicitanteUid }) {
   const id = `r_seed_${clave}`;
-  const slots = franjas(dia, minuto, duracion);
+  const [year, month, day] = dia.split('-');
+  const inicio = Timestamp.fromDate(new Date(`${dia}T00:00:00-05:00`));
+  const inicioReal = Timestamp.fromMillis(inicio.toMillis() + minuto * 60 * 1000);
+  const minutos = Array.from({ length: duracion / 30 }, (_, indice) => String(minuto + indice * 30));
   const ahora = FieldValue.serverTimestamp();
   const cuerpo = {
-    schemaVersion: 3,
+    schemaVersion: 5,
     negocioId: NEGOCIO,
     sedeId: cancha,
     canchaId: cancha,
     dia,
-    dias: [...new Set(slots.map((s) => s.dia))],
+    jornada: { year, month, day },
     minuto,
     duracion,
-    inicio: slots[0].inicio,
-    fin: Timestamp.fromMillis(slots[0].inicio.toMillis() + duracion * 60 * 1000),
-    slots,
+    minutos,
+    inicio: inicioReal,
+    fin: Timestamp.fromMillis(inicioReal.toMillis() + duracion * 60 * 1000),
     estado,
     bloqueo: false,
-    clienteId: origen === 'publico' ? '' : 'c_demo',
+    clienteId: '',
     clienteNombre: nombre,
     telefono,
-    montoCentimos: monto,
-    adelantoCentimos: adelanto,
-    saldoCentimos: monto - adelanto,
-    metodoPago,
+    montoCentimos: 0,
+    adelantoCentimos: 0,
+    saldoCentimos: 0,
+    metodoPago: '',
     promocionId: '',
+    historialPagos: [],
     origen,
     solicitanteUid: origen === 'publico' ? solicitanteUid : '',
     creadoPor: origen === 'publico' ? solicitanteUid : ADMIN,
@@ -199,22 +186,19 @@ async function reserva({ clave, cancha, dia, minuto, duracion, estado, origen, n
   };
   const escritura = db.batch();
   escritura.set(doc('negocios', NEGOCIO, 'reservas', id), cuerpo);
-  slots.forEach((slot, indice) => {
-    escritura.set(
-      doc('negocios', NEGOCIO, 'agenda', cancha, 'anios', slot.year, 'meses', slot.month, 'dias', slot.day, 'franjas', slot.minute),
-      {
+  if (estado === 'confirmada') {
+    const ocupados = Object.fromEntries(minutos.map((valor) => [valor, true]));
+    escritura.set(doc('negocios', NEGOCIO, 'agenda', cancha, 'dias', dia), {
+      ocupados,
+      ultimaOperacion: {
         reservaId: id,
         coleccion: 'reservas',
-        canchaId: cancha,
-        year: slot.year,
-        month: slot.month,
-        day: slot.day,
-        minute: slot.minute,
-        inicio: slot.inicio,
-        indice,
+        tipo: 'ocupar',
+        minutos,
       },
-    );
-  });
+    });
+    escritura.set(doc('agenda_publica', NEGOCIO, 'canchas', cancha, 'dias', dia), { ocupados });
+  }
   await escritura.commit();
   return id;
 }
@@ -226,29 +210,26 @@ const creada = [];
 creada.push(await reserva({
   clave: 'la19_hoy', cancha: 'la-19', dia: hoyTexto, minuto: 600, duracion: 120, estado: 'confirmada',
   origen: 'personal', nombre: 'Cliente demo uno', telefono: '+51999888777',
-  monto: 7000, adelanto: 2000, metodoPago: 'yape',
 }));
 creada.push(await reserva({
   clave: 'la23_hoy', cancha: 'la-23', dia: hoyTexto, minuto: 1020, duracion: 120, estado: 'confirmada',
   origen: 'personal', nombre: 'Cliente demo dos', telefono: '+51999888766',
-  monto: 4500, adelanto: 4500, metodoPago: 'efectivo',
 }));
 // Cruce de medianoche en la cancha con horario nocturno.
 creada.push(await reserva({
   clave: 'la24_hoy', cancha: 'la-24', dia: hoyTexto, minuto: 1380, duracion: 120, estado: 'confirmada',
   origen: 'personal', nombre: 'Cliente demo tres', telefono: '+51999888755',
-  monto: 6400, adelanto: 0, metodoPago: 'efectivo',
 }));
-// Solicitudes publicas pendientes, como las deja la web.
+// Las solicitudes mayores de tres horas quedan pendientes y no ocupan agenda.
 creada.push(await reserva({
-  clave: 'la19_manana', cancha: 'la-19', dia: manana, minuto: 780, duracion: 60, estado: 'pendiente',
+  clave: 'la19_manana', cancha: 'la-19', dia: manana, minuto: 780, duracion: 240, estado: 'pendiente',
   origen: 'publico', nombre: 'Reserva web pendiente', telefono: '+51999888744',
-  monto: 0, adelanto: 0, metodoPago: 'yape', solicitanteUid: 'anon-web-demo',
+  solicitanteUid: 'anon-web-demo',
 }));
 creada.push(await reserva({
-  clave: 'la24_manana', cancha: 'la-24', dia: manana, minuto: 1200, duracion: 120, estado: 'pendiente',
+  clave: 'la24_manana', cancha: 'la-24', dia: manana, minuto: 1200, duracion: 240, estado: 'pendiente',
   origen: 'publico', nombre: 'Segunda solicitud web', telefono: '+51999888733',
-  monto: 0, adelanto: 0, metodoPago: 'efectivo', solicitanteUid: 'anon-web-demo-2',
+  solicitanteUid: 'anon-web-demo-2',
 }));
 
 console.log('Seed de emulador listo.');

@@ -6,6 +6,7 @@ test('cuatro horas requieren ocho franjas consecutivas',()=>assert.deepEqual(ini
 test('cruza medianoche solo con la franja siguiente libre',()=>assert.deepEqual(iniciosDisponibles([1410,1440],60),[1410]));
 test('calcula el siguiente dia sin depender del huso del navegador',()=>assert.equal(siguienteDia('2026-12-31'),'2027-01-01'));
 test('formato accesible de hora',()=>assert.equal(hora(630),'10:30'));
+test('formato de madrugada conserva el dia operativo',()=>assert.equal(hora(1470),'00:30 (+1 día)'));
 test('respeta la duracion y alineacion del horario global del negocio',()=>assert.deepEqual(
   iniciosDeTurno([420,450,480,510,540,570],60,420,60),
   [420,480,540],

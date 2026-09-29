@@ -1,0 +1,192 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function autenticado() {
+      return request.auth != null;
+    }
+
+    function anonimo() {
+      return autenticado()
+        && request.auth.token.firebase.sign_in_provider == 'anonymous';
+    }
+
+    function empleadoAsignado(cancha) {
+      return autenticado()
+        && request.auth.token.rol == 'empleado_control'
+        && request.auth.token.canchas is list
+        && cancha in request.auth.token.canchas;
+    }
+
+    function rutaReserva(id) {
+      return /databases/$(database)/documents/reservas_privadas/$(id);
+    }
+
+    function rutaOcupacion(cancha, dia) {
+      return /databases/$(database)/documents/ocupacion_publica/$(cancha)/dias/$(dia);
+    }
+
+    function minutosValidos(r) {
+      let m = r.minutos;
+      let cantidad = m.size();
+      return m is list
+        && cantidad == r.duracion / 30
+        && cantidad >= 1 && cantidad <= 20
+        && m[0] is string && m[0] == string(r.minuto)
+        && (cantidad < 2 || int(m[1]) == r.minuto + 30)
+        && (cantidad < 3 || int(m[2]) == r.minuto + 60)
+        && (cantidad < 4 || int(m[3]) == r.minuto + 90)
+        && (cantidad < 5 || int(m[4]) == r.minuto + 120)
+        && (cantidad < 6 || int(m[5]) == r.minuto + 150)
+        && (cantidad < 7 || int(m[6]) == r.minuto + 180)
+        && (cantidad < 8 || int(m[7]) == r.minuto + 210)
+        && (cantidad < 9 || int(m[8]) == r.minuto + 240)
+        && (cantidad < 10 || int(m[9]) == r.minuto + 270)
+        && (cantidad < 11 || int(m[10]) == r.minuto + 300)
+        && (cantidad < 12 || int(m[11]) == r.minuto + 330)
+        && (cantidad < 13 || int(m[12]) == r.minuto + 360)
+        && (cantidad < 14 || int(m[13]) == r.minuto + 390)
+        && (cantidad < 15 || int(m[14]) == r.minuto + 420)
+        && (cantidad < 16 || int(m[15]) == r.minuto + 450)
+        && (cantidad < 17 || int(m[16]) == r.minuto + 480)
+        && (cantidad < 18 || int(m[17]) == r.minuto + 510)
+        && (cantidad < 19 || int(m[18]) == r.minuto + 540)
+        && (cantidad < 20 || int(m[19]) == r.minuto + 570);
+    }
+
+    function camposReservaValidos(id, r) {
+      return id.matches('^r_[A-Za-z0-9_-]{8,100}$')
+        && r.keys().hasOnly([
+          'schemaVersion', 'canchaId', 'dia', 'minuto', 'duracion', 'minutos',
+          'estado', 'clienteNombre', 'telefono', 'adelantoCentimos',
+          'saldoCentimos', 'historialPagos', 'origen', 'solicitanteUid',
+          'creadoPor', 'atendidoPor', 'createdAt', 'updatedAt', 'version'
+        ])
+        && r.schemaVersion == 1
+        && r.canchaId in ['la-19', 'la-23', 'la-24']
+        && r.dia is string && r.dia.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && r.minuto is int && r.minuto >= 420 && r.minuto % 30 == 0
+        && r.duracion is int && r.duracion >= 30 && r.duracion <= 600
+        && r.duracion % 30 == 0
+        && r.minuto + r.duracion <= 1500
+        && minutosValidos(r)
+        && r.clienteNombre is string && r.clienteNombre.size() >= 1
+        && r.clienteNombre.size() <= 120
+        && r.telefono is string && r.telefono.size() >= 7
+        && r.telefono.size() <= 24
+        && r.adelantoCentimos is int && r.adelantoCentimos >= 0
+        && r.saldoCentimos is int && r.saldoCentimos >= 0
+        && r.historialPagos is list
+        && r.createdAt is timestamp && r.updatedAt is timestamp
+        && r.version == 1;
+    }
+
+    function actorCreador(r) {
+      return r.creadoPor == request.auth.uid
+        && (anonimo()
+            && r.origen == 'publico'
+            && r.solicitanteUid == request.auth.uid
+          || empleadoAsignado(r.canchaId)
+            && r.origen == 'personal'
+            && r.solicitanteUid == '');
+    }
+
+    function cambioExacto(ruta, minutos) {
+      let despues = getAfter(ruta).data.ocupados;
+      return !exists(ruta)
+          && despues.keys().hasOnly(minutos)
+          && despues.keys().hasAll(minutos)
+        || exists(ruta)
+          && despues.diff(get(ruta).data.ocupados).affectedKeys().hasOnly(minutos)
+          && despues.diff(get(ruta).data.ocupados).affectedKeys().hasAll(minutos)
+          && !get(ruta).data.ocupados.keys().hasAny(minutos);
+    }
+
+    function ocupacionLigada(id, r) {
+      let ruta = rutaOcupacion(r.canchaId, r.dia);
+      let despues = getAfter(ruta).data;
+      return existsAfter(ruta)
+        && despues.operacion == {
+          'reservaId': id,
+          'inicio': r.minuto,
+          'duracion': r.duracion
+        }
+        && cambioExacto(ruta, r.minutos);
+    }
+
+    function altaReservaValida(id) {
+      let r = request.resource.data;
+      return camposReservaValidos(id, r)
+        && actorCreador(r)
+        && r.atendidoPor == ''
+        && (r.duracion <= 180
+            && r.estado == 'confirmada'
+            && ocupacionLigada(id, r)
+          || r.duracion > 180
+            && r.estado == 'pendiente');
+    }
+
+    function aprobacionValida(id) {
+      let antes = resource.data;
+      let ahora = request.resource.data;
+      return antes.estado == 'pendiente'
+        && antes.duracion > 180
+        && empleadoAsignado(antes.canchaId)
+        && ahora.diff(antes).affectedKeys().hasOnly([
+          'estado', 'atendidoPor', 'updatedAt', 'version'
+        ])
+        && ahora.estado == 'confirmada'
+        && ahora.atendidoPor == request.auth.uid
+        && ahora.updatedAt is timestamp
+        && ahora.version == antes.version + 1
+        && ocupacionLigada(id, ahora);
+    }
+
+    function ocupacionValida(cancha, dia, antes) {
+      let d = request.resource.data;
+      let op = d.operacion;
+      let ruta = rutaReserva(op.reservaId);
+      let r = getAfter(ruta).data;
+      let cambio = d.ocupados.diff(antes).affectedKeys();
+      return d.keys().hasOnly(['ocupados', 'operacion'])
+        && d.ocupados is map && d.ocupados.size() <= 36
+        && d.ocupados.values().hasOnly([true])
+        && op is map && op.keys().hasOnly(['reservaId', 'inicio', 'duracion'])
+        && op.reservaId is string
+        && r.schemaVersion == 1 && r.estado == 'confirmada'
+        && r.canchaId == cancha && r.dia == dia
+        && op.inicio == r.minuto && op.duracion == r.duracion
+        && cambio.hasOnly(r.minutos) && cambio.hasAll(r.minutos)
+        && !antes.keys().hasAny(r.minutos)
+        && d.ocupados.keys().hasAll(r.minutos)
+        && (!exists(ruta)
+            && r.duracion <= 180
+            && actorCreador(r)
+          || exists(ruta)
+            && get(ruta).data.estado == 'pendiente'
+            && get(ruta).data.version + 1 == r.version
+            && r.duracion > 180
+            && empleadoAsignado(cancha));
+    }
+
+    match /reservas_privadas/{id} {
+      allow get: if autenticado()
+        && (resource.data.solicitanteUid == request.auth.uid
+          || empleadoAsignado(resource.data.canchaId));
+      allow list: if false;
+      allow create: if altaReservaValida(id);
+      allow update: if aprobacionValida(id);
+      allow delete: if false;
+    }
+
+    match /ocupacion_publica/{cancha}/dias/{dia} {
+      allow read: if true;
+      allow create: if ocupacionValida(cancha, dia, {});
+      allow update: if ocupacionValida(cancha, dia, resource.data.ocupados);
+      allow delete: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

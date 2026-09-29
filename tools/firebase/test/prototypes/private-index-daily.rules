@@ -1,0 +1,408 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function autenticado() {
+      return request.auth != null;
+    }
+
+    function anonimo() {
+      return autenticado()
+        && request.auth.token.firebase.sign_in_provider == 'anonymous';
+    }
+
+    function empleadoAsignado(cancha) {
+      return autenticado()
+        && request.auth.token.rol == 'empleado_control'
+        && request.auth.token.canchas is list
+        && cancha in request.auth.token.canchas;
+    }
+
+    function rutaReserva(id) {
+      return /databases/$(database)/documents/reservas_privadas/$(id);
+    }
+
+    function rutaIndice(cancha, dia, inicio) {
+      return /databases/$(database)/documents/indices_reserva/$(cancha)/dias/$(dia)/inicios/$(inicio);
+    }
+
+    function rutaOcupacion(cancha, dia) {
+      return /databases/$(database)/documents/ocupacion_publica/$(cancha)/dias/$(dia);
+    }
+
+    function minutosValidos(r) {
+      let m = r.minutos;
+      let cantidad = m.size();
+      return m is list
+        && cantidad == r.duracion / 30
+        && cantidad >= 1 && cantidad <= 20
+        && m[0] is string && m[0] == string(r.minuto)
+        && (cantidad < 2 || int(m[1]) == r.minuto + 30)
+        && (cantidad < 3 || int(m[2]) == r.minuto + 60)
+        && (cantidad < 4 || int(m[3]) == r.minuto + 90)
+        && (cantidad < 5 || int(m[4]) == r.minuto + 120)
+        && (cantidad < 6 || int(m[5]) == r.minuto + 150)
+        && (cantidad < 7 || int(m[6]) == r.minuto + 180)
+        && (cantidad < 8 || int(m[7]) == r.minuto + 210)
+        && (cantidad < 9 || int(m[8]) == r.minuto + 240)
+        && (cantidad < 10 || int(m[9]) == r.minuto + 270)
+        && (cantidad < 11 || int(m[10]) == r.minuto + 300)
+        && (cantidad < 12 || int(m[11]) == r.minuto + 330)
+        && (cantidad < 13 || int(m[12]) == r.minuto + 360)
+        && (cantidad < 14 || int(m[13]) == r.minuto + 390)
+        && (cantidad < 15 || int(m[14]) == r.minuto + 420)
+        && (cantidad < 16 || int(m[15]) == r.minuto + 450)
+        && (cantidad < 17 || int(m[16]) == r.minuto + 480)
+        && (cantidad < 18 || int(m[17]) == r.minuto + 510)
+        && (cantidad < 19 || int(m[18]) == r.minuto + 540)
+        && (cantidad < 20 || int(m[19]) == r.minuto + 570);
+    }
+
+    function camposReservaValidos(id, r) {
+      return id.matches('^r_[A-Za-z0-9_-]{8,100}$')
+        && r.keys().hasOnly([
+          'schemaVersion', 'canchaId', 'dia', 'minuto', 'duracion', 'minutos',
+          'estado', 'clienteNombre', 'telefono', 'montoCentimos',
+          'adelantoCentimos', 'saldoCentimos', 'metodoPago', 'historialPagos',
+          'origen', 'solicitanteUid', 'creadoPor', 'atendidoPor',
+          'createdAt', 'updatedAt', 'version'
+        ])
+        && r.schemaVersion == 1
+        && r.canchaId in ['la-19', 'la-23', 'la-24']
+        && r.dia is string && r.dia.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && r.minuto is int && r.minuto >= 420 && r.minuto % 30 == 0
+        && r.duracion is int && r.duracion >= 30 && r.duracion <= 600
+        && r.duracion % 30 == 0
+        && r.minuto + r.duracion <= 1500
+        && minutosValidos(r)
+        && r.clienteNombre is string && r.clienteNombre.size() >= 1
+        && r.clienteNombre.size() <= 120
+        && r.telefono is string && r.telefono.size() >= 7
+        && r.telefono.size() <= 24
+        && r.montoCentimos is int && r.montoCentimos >= 0
+        && r.adelantoCentimos is int && r.adelantoCentimos >= 0
+        && r.adelantoCentimos <= r.montoCentimos
+        && r.saldoCentimos == r.montoCentimos - r.adelantoCentimos
+        && r.metodoPago is string
+        && r.historialPagos is list
+        && r.createdAt is timestamp && r.updatedAt is timestamp
+        && r.version == 1;
+    }
+
+    function actorCreador(r) {
+      return r.creadoPor == request.auth.uid
+        && (anonimo()
+            && r.origen == 'publico'
+            && r.solicitanteUid == request.auth.uid
+          || empleadoAsignado(r.canchaId)
+            && r.origen == 'personal'
+            && r.solicitanteUid == '');
+    }
+
+    function cambioOcupa(ruta, r) {
+      let despues = getAfter(ruta).data.ocupados;
+      return existsAfter(ruta)
+        && despues.values().hasOnly([true])
+        && (!exists(ruta)
+            && despues.keys().hasOnly(r.minutos)
+            && despues.keys().hasAll(r.minutos)
+          || exists(ruta)
+            && despues.diff(get(ruta).data.ocupados).affectedKeys().hasOnly(r.minutos)
+            && despues.diff(get(ruta).data.ocupados).affectedKeys().hasAll(r.minutos)
+            && !get(ruta).data.ocupados.keys().hasAny(r.minutos)
+            && despues.keys().hasAll(r.minutos));
+    }
+
+    function cambioLibera(ruta, r) {
+      let antes = get(ruta).data.ocupados;
+      let despues = getAfter(ruta).data.ocupados;
+      return exists(ruta) && existsAfter(ruta)
+        && antes.keys().hasAll(r.minutos)
+        && despues.diff(antes).affectedKeys().hasOnly(r.minutos)
+        && despues.diff(antes).affectedKeys().hasAll(r.minutos)
+        && !despues.keys().hasAny(r.minutos)
+        && despues.values().hasOnly([true]);
+    }
+
+    function indiceCreado(id, r) {
+      let ruta = rutaIndice(r.canchaId, r.dia, r.minuto);
+      return !exists(ruta) && getAfter(ruta).data == {'reservaId': id};
+    }
+
+    function indiceLiberado(id, r) {
+      let ruta = rutaIndice(r.canchaId, r.dia, r.minuto);
+      return get(ruta).data == {'reservaId': id} && !existsAfter(ruta);
+    }
+
+    function altaReservaValida(id) {
+      let r = request.resource.data;
+      return camposReservaValidos(id, r)
+        && actorCreador(r)
+        && r.atendidoPor == ''
+        && (r.duracion <= 180
+            && r.estado == 'confirmada'
+            && indiceCreado(id, r)
+            && cambioOcupa(rutaOcupacion(r.canchaId, r.dia), r)
+          || r.duracion > 180
+            && r.estado == 'pendiente');
+    }
+
+    function transicionReservaValida(id) {
+      let antes = resource.data;
+      let ahora = request.resource.data;
+      return empleadoAsignado(antes.canchaId)
+        && ahora.diff(antes).affectedKeys().hasOnly([
+          'estado', 'atendidoPor', 'updatedAt', 'version'
+        ])
+        && ahora.atendidoPor == request.auth.uid
+        && ahora.updatedAt is timestamp
+        && ahora.version == antes.version + 1
+        && (antes.estado == 'pendiente'
+            && antes.duracion > 180
+            && ahora.estado == 'confirmada'
+            && indiceCreado(id, ahora)
+            && cambioOcupa(rutaOcupacion(ahora.canchaId, ahora.dia), ahora)
+          || antes.estado == 'confirmada'
+            && ahora.estado == 'cancelada'
+            && indiceLiberado(id, ahora)
+            && cambioLibera(rutaOcupacion(ahora.canchaId, ahora.dia), ahora));
+    }
+
+    function indiceNuevoValido(cancha, dia, inicio) {
+      let id = request.resource.data.reservaId;
+      let ruta = rutaReserva(id);
+      let r = getAfter(ruta).data;
+      return request.resource.data == {'reservaId': id}
+        && r.schemaVersion == 1 && r.estado == 'confirmada'
+        && r.canchaId == cancha && r.dia == dia && r.minuto == int(inicio)
+        && cambioOcupa(rutaOcupacion(cancha, dia), r)
+        && (!exists(ruta)
+            && r.duracion <= 180
+            && actorCreador(r)
+          || exists(ruta)
+            && get(ruta).data.estado == 'pendiente'
+            && get(ruta).data.version + 1 == r.version
+            && r.duracion > 180
+            && empleadoAsignado(cancha));
+    }
+
+    function indiceEliminadoValido(cancha, dia, inicio) {
+      let id = resource.data.reservaId;
+      let r = getAfter(rutaReserva(id)).data;
+      return empleadoAsignado(cancha)
+        && r.schemaVersion == 1 && r.estado == 'cancelada'
+        && r.canchaId == cancha && r.dia == dia && r.minuto == int(inicio)
+        && cambioLibera(rutaOcupacion(cancha, dia), r);
+    }
+
+    function ocupaDesde(cancha, dia, antes, inicio) {
+      let indice = rutaIndice(cancha, dia, inicio);
+      let id = getAfter(indice).data.reservaId;
+      let r = getAfter(rutaReserva(id)).data;
+      let despues = request.resource.data.ocupados;
+      let cambio = despues.diff(antes).affectedKeys();
+      return !exists(indice) && existsAfter(indice)
+        && r.schemaVersion == 1 && r.estado == 'confirmada'
+        && r.canchaId == cancha && r.dia == dia && r.minuto == inicio
+        && cambio.hasOnly(r.minutos) && cambio.hasAll(r.minutos)
+        && !antes.keys().hasAny(r.minutos)
+        && despues.keys().hasAll(r.minutos);
+    }
+
+    function liberaDesde(cancha, dia, antes, inicio) {
+      let indice = rutaIndice(cancha, dia, inicio);
+      let id = get(indice).data.reservaId;
+      let r = getAfter(rutaReserva(id)).data;
+      let despues = request.resource.data.ocupados;
+      let cambio = despues.diff(antes).affectedKeys();
+      return exists(indice) && !existsAfter(indice)
+        && r.schemaVersion == 1 && r.estado == 'cancelada'
+        && r.canchaId == cancha && r.dia == dia && r.minuto == inicio
+        && cambio.hasOnly(r.minutos) && cambio.hasAll(r.minutos)
+        && antes.keys().hasAll(r.minutos)
+        && !despues.keys().hasAny(r.minutos);
+    }
+
+    function cambioDesde(cancha, dia, antes, inicio) {
+      let indice = rutaIndice(cancha, dia, inicio);
+      return !exists(indice) && existsAfter(indice)
+          && ocupaDesde(cancha, dia, antes, inicio)
+        || exists(indice) && !existsAfter(indice)
+          && liberaDesde(cancha, dia, antes, inicio);
+    }
+
+    function inicio420a540(cancha, dia, antes) {
+      let cambio = request.resource.data.ocupados.diff(antes).affectedKeys();
+      return cambio.hasAny(['420']) && cambioDesde(cancha, dia, antes, 420)
+        || cambio.hasAny(['450']) && cambioDesde(cancha, dia, antes, 450)
+        || cambio.hasAny(['480']) && cambioDesde(cancha, dia, antes, 480)
+        || cambio.hasAny(['510']) && cambioDesde(cancha, dia, antes, 510)
+        || cambio.hasAny(['540']) && cambioDesde(cancha, dia, antes, 540);
+    }
+
+    function inicio570a660(cancha, dia, antes) {
+      let cambio = request.resource.data.ocupados.diff(antes).affectedKeys();
+      return cambio.hasAny(['570']) && cambioDesde(cancha, dia, antes, 570)
+        || cambio.hasAny(['600']) && cambioDesde(cancha, dia, antes, 600)
+        || cambio.hasAny(['630']) && cambioDesde(cancha, dia, antes, 630)
+        || cambio.hasAny(['660']) && cambioDesde(cancha, dia, antes, 660);
+    }
+
+    function inicio690a810(cancha, dia, antes) {
+      let cambio = request.resource.data.ocupados.diff(antes).affectedKeys();
+      return cambio.hasAny(['690']) && cambioDesde(cancha, dia, antes, 690)
+        || cambio.hasAny(['720']) && cambioDesde(cancha, dia, antes, 720)
+        || cambio.hasAny(['750']) && cambioDesde(cancha, dia, antes, 750)
+        || cambio.hasAny(['780']) && cambioDesde(cancha, dia, antes, 780)
+        || cambio.hasAny(['810']) && cambioDesde(cancha, dia, antes, 810);
+    }
+
+    function inicio840a930(cancha, dia, antes) {
+      let cambio = request.resource.data.ocupados.diff(antes).affectedKeys();
+      return cambio.hasAny(['840']) && cambioDesde(cancha, dia, antes, 840)
+        || cambio.hasAny(['870']) && cambioDesde(cancha, dia, antes, 870)
+        || cambio.hasAny(['900']) && cambioDesde(cancha, dia, antes, 900)
+        || cambio.hasAny(['930']) && cambioDesde(cancha, dia, antes, 930);
+    }
+
+    function inicio960a1080(cancha, dia, antes) {
+      let cambio = request.resource.data.ocupados.diff(antes).affectedKeys();
+      return cambio.hasAny(['960']) && cambioDesde(cancha, dia, antes, 960)
+        || cambio.hasAny(['990']) && cambioDesde(cancha, dia, antes, 990)
+        || cambio.hasAny(['1020']) && cambioDesde(cancha, dia, antes, 1020)
+        || cambio.hasAny(['1050']) && cambioDesde(cancha, dia, antes, 1050)
+        || cambio.hasAny(['1080']) && cambioDesde(cancha, dia, antes, 1080);
+    }
+
+    function inicio1110a1200(cancha, dia, antes) {
+      let cambio = request.resource.data.ocupados.diff(antes).affectedKeys();
+      return cambio.hasAny(['1110']) && cambioDesde(cancha, dia, antes, 1110)
+        || cambio.hasAny(['1140']) && cambioDesde(cancha, dia, antes, 1140)
+        || cambio.hasAny(['1170']) && cambioDesde(cancha, dia, antes, 1170)
+        || cambio.hasAny(['1200']) && cambioDesde(cancha, dia, antes, 1200);
+    }
+
+    function inicio1230a1350(cancha, dia, antes) {
+      let cambio = request.resource.data.ocupados.diff(antes).affectedKeys();
+      return cambio.hasAny(['1230']) && cambioDesde(cancha, dia, antes, 1230)
+        || cambio.hasAny(['1260']) && cambioDesde(cancha, dia, antes, 1260)
+        || cambio.hasAny(['1290']) && cambioDesde(cancha, dia, antes, 1290)
+        || cambio.hasAny(['1320']) && cambioDesde(cancha, dia, antes, 1320)
+        || cambio.hasAny(['1350']) && cambioDesde(cancha, dia, antes, 1350);
+    }
+
+    function inicio1380a1470(cancha, dia, antes) {
+      let cambio = request.resource.data.ocupados.diff(antes).affectedKeys();
+      return cambio.hasAny(['1380']) && cambioDesde(cancha, dia, antes, 1380)
+        || cambio.hasAny(['1410']) && cambioDesde(cancha, dia, antes, 1410)
+        || cambio.hasAny(['1440']) && cambioDesde(cancha, dia, antes, 1440)
+        || cambio.hasAny(['1470']) && cambioDesde(cancha, dia, antes, 1470);
+    }
+
+    function inicio420a660(cancha, dia, antes) {
+      let cambio = request.resource.data.ocupados.diff(antes).affectedKeys();
+      let izquierda = ['420', '450', '480', '510', '540'];
+      return cambio.hasAny(izquierda)
+          && inicio420a540(cancha, dia, antes)
+        || !cambio.hasAny(izquierda)
+          && inicio570a660(cancha, dia, antes);
+    }
+
+    function inicio690a930(cancha, dia, antes) {
+      let cambio = request.resource.data.ocupados.diff(antes).affectedKeys();
+      let izquierda = ['690', '720', '750', '780', '810'];
+      return cambio.hasAny(izquierda)
+          && inicio690a810(cancha, dia, antes)
+        || !cambio.hasAny(izquierda)
+          && inicio840a930(cancha, dia, antes);
+    }
+
+    function inicio960a1200(cancha, dia, antes) {
+      let cambio = request.resource.data.ocupados.diff(antes).affectedKeys();
+      let izquierda = ['960', '990', '1020', '1050', '1080'];
+      return cambio.hasAny(izquierda)
+          && inicio960a1080(cancha, dia, antes)
+        || !cambio.hasAny(izquierda)
+          && inicio1110a1200(cancha, dia, antes);
+    }
+
+    function inicio1230a1470(cancha, dia, antes) {
+      let cambio = request.resource.data.ocupados.diff(antes).affectedKeys();
+      let izquierda = ['1230', '1260', '1290', '1320', '1350'];
+      return cambio.hasAny(izquierda)
+          && inicio1230a1350(cancha, dia, antes)
+        || !cambio.hasAny(izquierda)
+          && inicio1380a1470(cancha, dia, antes);
+    }
+
+    function inicio420a930(cancha, dia, antes) {
+      let cambio = request.resource.data.ocupados.diff(antes).affectedKeys();
+      let izquierda = [
+        '420', '450', '480', '510', '540', '570', '600', '630', '660'
+      ];
+      return cambio.hasAny(izquierda)
+          && inicio420a660(cancha, dia, antes)
+        || !cambio.hasAny(izquierda)
+          && inicio690a930(cancha, dia, antes);
+    }
+
+    function inicio960a1470(cancha, dia, antes) {
+      let cambio = request.resource.data.ocupados.diff(antes).affectedKeys();
+      let izquierda = [
+        '960', '990', '1020', '1050', '1080',
+        '1110', '1140', '1170', '1200'
+      ];
+      return cambio.hasAny(izquierda)
+          && inicio960a1200(cancha, dia, antes)
+        || !cambio.hasAny(izquierda)
+          && inicio1230a1470(cancha, dia, antes);
+    }
+
+    function inicioCambioValido(cancha, dia, antes) {
+      let cambio = request.resource.data.ocupados.diff(antes).affectedKeys();
+      let izquierda = [
+        '420', '450', '480', '510', '540', '570', '600', '630', '660',
+        '690', '720', '750', '780', '810', '840', '870', '900', '930'
+      ];
+      return cambio.hasAny(izquierda)
+          && inicio420a930(cancha, dia, antes)
+        || !cambio.hasAny(izquierda)
+          && inicio960a1470(cancha, dia, antes);
+    }
+
+    function ocupacionValida(cancha, dia, antes) {
+      let d = request.resource.data;
+      return d.keys().hasOnly(['ocupados'])
+        && d.ocupados is map && d.ocupados.size() <= 36
+        && d.ocupados.values().hasOnly([true])
+        && inicioCambioValido(cancha, dia, antes);
+    }
+
+    match /reservas_privadas/{id} {
+      allow get: if autenticado()
+        && (resource.data.solicitanteUid == request.auth.uid
+          || empleadoAsignado(resource.data.canchaId));
+      allow list: if false;
+      allow create: if altaReservaValida(id);
+      allow update: if transicionReservaValida(id);
+      allow delete: if false;
+    }
+
+    match /indices_reserva/{cancha}/dias/{dia}/inicios/{inicio} {
+      allow read: if empleadoAsignado(cancha);
+      allow create: if indiceNuevoValido(cancha, dia, inicio);
+      allow update: if false;
+      allow delete: if indiceEliminadoValido(cancha, dia, inicio);
+    }
+
+    match /ocupacion_publica/{cancha}/dias/{dia} {
+      allow read: if true;
+      allow create: if ocupacionValida(cancha, dia, {});
+      allow update: if ocupacionValida(cancha, dia, resource.data.ocupados);
+      allow delete: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

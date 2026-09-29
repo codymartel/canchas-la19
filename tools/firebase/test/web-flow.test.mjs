@@ -48,9 +48,6 @@ function futureDay(days = 2) {
 const horarioGlobal = {
   aperturaMinuto: 480,
   cierreMinuto: 1320,
-  // 30 minutos = una sola franja. El emulador no puede evaluar reservas de dos
-  // o mas slots (limite de 1000 expresiones), asi que el flujo web se verifica
-  // aqui con el turno mas corto que acepta el servidor.
   duracionTurnoMinutos: 30,
 };
 
@@ -140,8 +137,6 @@ const request = {
   duracion: 30,
   nombre: 'PRUEBA WEB EMULADOR',
   telefono: '+51900000000',
-  metodoPago: 'yape',
-  promocionId: '',
 };
 const created = await solicitarReserva({
   firebase,
@@ -150,19 +145,29 @@ const created = await solicitarReserva({
   negocio: BUSINESS,
   datos: request,
 });
-assert.equal(created.estado, 'pendiente');
+assert.equal(created.estado, 'confirmada');
 
 const staff = environment.authenticatedContext(EMPLOYEE, {
   firebase: { sign_in_provider: 'password' },
 }).firestore();
 const panelQuery = query(
   collection(staff, `negocios/${BUSINESS}/reservas`),
-  where('dias', 'array-contains', day),
+  where('dia', '==', day),
   limit(1500),
 );
 const panelRows = await assertSucceeds(getDocs(panelQuery));
 assert.equal(panelRows.docs.some(doc => doc.id === created.id), true);
-assert.equal(panelRows.docs.find(doc => doc.id === created.id).data().estado, 'pendiente');
+assert.equal(panelRows.docs.find(doc => doc.id === created.id).data().estado, 'confirmada');
+const privateAgenda = await assertSucceeds(getDoc(doc(
+  staff,
+  `negocios/${BUSINESS}/agenda/la-19/dias/${day}`,
+)));
+assert.deepEqual(privateAgenda.data().ocupados, { '1140': true });
+assert.equal(privateAgenda.data().ultimaOperacion.reservaId, created.id);
+const publicAgenda = await db.doc(
+  `agenda_publica/${BUSINESS}/canchas/la-19/dias/${day}`,
+).get({ source: 'server' });
+assert.deepEqual(publicAgenda.data(), { ocupados: { '1140': true } });
 
 const secondApp = firebase.initializeApp({
   apiKey: 'demo-key',
@@ -207,4 +212,4 @@ await secondAuth.signOut();
 await app.delete();
 await secondApp.delete();
 await environment.cleanup();
-console.log('Web Spark: 3 canchas, solicitud pendiente, panel, colision y privacidad OK.');
+console.log('Web Spark schema 5: 3 canchas, reserva, agenda diaria, colision y privacidad OK.');

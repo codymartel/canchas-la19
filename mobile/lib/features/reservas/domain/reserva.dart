@@ -7,21 +7,8 @@ class Reserva extends Registro {
   int get adelanto => entero('adelantoCentimos');
   int get saldo => monto - adelanto;
   String get estado => texto('estado');
-  bool get ocupa => estado != 'cancelada';
-  int minutoEnDia(String dia) {
-    final partes = dia.split('-');
-    if (partes.length != 3) return entero('minuto');
-    final slots = datos['slots'] as List? ?? const [];
-    for (final valor in slots) {
-      final slot = valor as Map? ?? const {};
-      if ('${slot['year']}'.padLeft(4, '0') == partes[0] &&
-          '${slot['month']}'.padLeft(2, '0') == partes[1] &&
-          '${slot['day']}'.padLeft(2, '0') == partes[2]) {
-        return int.tryParse('${slot['minute']}') ?? entero('minuto');
-      }
-    }
-    return entero('minuto');
-  }
+  bool get ocupa => ['confirmada', 'no_asistio'].contains(estado);
+  int minutoEnDia(String dia) => entero('minuto');
 }
 
 class ResumenDia {

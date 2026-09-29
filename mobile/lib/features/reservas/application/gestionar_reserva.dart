@@ -11,10 +11,6 @@ class GestionarReserva {
         ...datos,
         'telefono': normalizarTelefono(datos['telefono'] as String),
       };
-      if ((datos['adelantoCentimos'] as int) >
-          (datos['montoCentimos'] as int)) {
-        return Future.value(const Fallo<void>('El adelanto supera el monto.'));
-      }
     }
     return repository.registrar(datos);
   }

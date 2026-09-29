@@ -1,10 +1,10 @@
-export const hora = m => `${String(Math.floor(m / 60)).padStart(2,'0')}:${String(m % 60).padStart(2,'0')}`;
+export const hora = m => `${String(Math.floor((m % 1440) / 60)).padStart(2,'0')}:${String(m % 60).padStart(2,'0')}${m >= 1440 ? ' (+1 día)' : ''}`;
 export const soles = c => new Intl.NumberFormat('es-PE',{style:'currency',currency:'PEN'}).format(c / 100);
 export const hoyLima = () => new Date(Date.now() - 5 * 3600000).toISOString().slice(0,10);
 export function iniciosDisponibles(libres, duracion) {
   const set = new Set(libres);
-  if (!Number.isInteger(duracion) || duracion < 30 || duracion > 240 || duracion % 30) return [];
-  return libres.filter(m => m < 1440 && Array.from({length:duracion / 30},(_,i)=>m + i * 30).every(s=>set.has(s)));
+  if (!Number.isInteger(duracion) || duracion < 30 || duracion > 600 || duracion % 30) return [];
+  return libres.filter(m => Array.from({length:duracion / 30},(_,i)=>m + i * 30).every(s=>set.has(s)));
 }
 export function iniciosDeTurno(libres, duracion, apertura, turno) {
   if (!Number.isInteger(turno) || turno < 30 || turno > 240 || turno % 30) return [];
