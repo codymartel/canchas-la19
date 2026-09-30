@@ -1,5 +1,7 @@
 # Validacion de produccion — 29 de septiembre de 2026
 
+Actualización posterior: [corrección de horas y recarga](CORRECCION_HORAS_Y_RECARGA_2026-09-29.md). Las versiones y filas de 30 minutos de este informe corresponden al corte anterior.
+
 Proyecto real: glass-sintetico. Negocio existente: grass-sintetico. No hubo push. No se creo otro negocio ni canchas ficticias. Formulario publico habilitado.
 
 ## Inventario y preservacion
