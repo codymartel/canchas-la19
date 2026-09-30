@@ -35,7 +35,7 @@ const canchaReservable = Registro('la-19', {
   'tarifaTurnoCentimos': 5000,
 });
 
-/// Cancha sin tarifa ni direccion: no debe aparecer como reservable.
+/// Dirección y tarifa pendientes no impiden reservar.
 const canchaIncompleta = Registro('la-23', {
   'activa': true,
   'sedeId': 'la-23',
@@ -175,12 +175,18 @@ void main() {
       expect(find.text('Tabla La 19'), findsOneWidget);
       expect(find.text('Tabla La 23'), findsOneWidget);
       expect(find.text('Tabla La 24'), findsOneWidget);
-      expect(find.text('Libre'), findsNWidgets(108));
-      expect(find.text('00:30 (+1 dia)\n01:00 (+1 dia)'), findsNWidgets(3));
+      expect(find.text('Libre'), findsNWidgets(54));
+      expect(find.text('00:00 (+1 dia)\n01:00 (+1 dia)'), findsNWidgets(3));
       expect(tester.takeException(), isNull);
       await tester.tap(find.text('Reserva'));
       await tester.pumpAndSettle();
       expect(find.text('Registrar reserva'), findsOneWidget);
+      expect(find.text('1 hora'), findsOneWidget);
+      expect(find.text('30 minutos'), findsNothing);
+      await tester.ensureVisible(find.byType(SwitchListTile));
+      await tester.tap(find.byType(SwitchListTile));
+      await tester.pumpAndSettle();
+      expect(find.text('30 minutos'), findsOneWidget);
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox());
       sp.dispose();
@@ -219,9 +225,9 @@ void main() {
           reservas: [
             Reserva('r1', {
               'dia': '2026-09-26',
-              'minutos': ['600', '630'],
-              'minuto': 600,
-              'duracion': 60,
+              'minutos': ['630'],
+              'minuto': 630,
+              'duracion': 30,
               'sedeId': 'la-19',
               'canchaId': 'la-19',
               'clienteNombre': 'Cliente de prueba',
@@ -237,6 +243,8 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.textContaining('Cliente de prueba'), findsWidgets);
+      expect(find.text('10:30 – 11:00'), findsOneWidget);
+      expect(find.text('10:00\n11:00'), findsNWidgets(3));
       expect(find.text('Reserva'), findsNothing);
       expect(tester.takeException(), isNull);
       datos.addError(

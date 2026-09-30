@@ -1,0 +1,30 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {webcrypto} from 'node:crypto';
+import * as disponibilidad from '../public/disponibilidad.js';
+import {conTiempoLimite} from '../public/lectura.js';
+test('actualizar termina sin esperar listeners y funciona después de reservar',async()=>{
+ const elementos=new Map();
+ function elemento(){return {value:'',textContent:'',dataset:{},disabled:false,hidden:false,children:[],events:{},append(...a){this.children.push(...a);},replaceChildren(...a){this.children=a;this.value=a[0]?.value??'';},querySelectorAll(){return [];},addEventListener(t,f){this.events[t]=f;}};}
+ const document={getElementById(id){if(!elementos.has(id))elementos.set(id,elemento());return elementos.get(id);},createElement:elemento};
+ let lecturas=0,envios=0;
+ const ref={collection(){return this;},doc(){return this;},where(){return this;},async get(){lecturas++;return {exists:true,data:()=>({aperturaMinuto:420,cierreMinuto:60,duracionTurnoMinutos:30,ocupados:{}}),docs:[{id:'la-19',data:()=>({nombre:'La 19',sedeId:'la-19',sedes:['la-19']})}]};},onSnapshot(){return ()=>{};}};
+ const auth={currentUser:{uid:'sesion'}};
+ const db={collection:()=>ref};
+ const firebase={initializeApp(){},auth:()=>auth,firestore:()=>db};
+ const fuente=readFileSync(new URL('../public/app.js',import.meta.url),'utf8').replace(/^import .*;\r?\n/gm,'');
+ const AsyncFunction=Object.getPrototypeOf(async function(){}).constructor;
+ const nombres=Object.keys(disponibilidad);
+ await new AsyncFunction('document','window','location','firebase','crypto','sessionStorage','conTiempoLimite','solicitarReserva',...nombres,fuente)(document,{GRASS_RESERVAS_HABILITADAS:true,GRASS_FIREBASE_CONFIG:{}},{hostname:'sitio.example'},firebase,webcrypto,{getItem:()=>null,setItem(){}},conTiempoLimite,async()=>{envios++;return {id:'r_prueba',estado:'confirmada'};},...nombres.map(n=>disponibilidad[n]));
+ const recargar=elementos.get('recargar');assert.equal(recargar.disabled,false);
+ const cancha=elementos.get('cancha');cancha.value='la-19';cancha.events.change();
+ assert.equal(elementos.get('duracion').value,60);
+ assert.ok(elementos.get('duracion').children.every(o=>Number(o.value)%60===0));
+ elementos.get('minuto').value='1440';document.getElementById('nombre').value='Prueba local';document.getElementById('telefono').value='900000000';
+ await elementos.get('reserva').events.submit({preventDefault(){}});assert.equal(envios,1);
+ const recibo=elementos.get('estado').textContent,antes=lecturas;
+ await recargar.events.click();assert.ok(lecturas>antes);assert.equal(recargar.disabled,false);
+ assert.equal(elementos.get('estado').textContent,recibo);assert.equal(elementos.get('minuto').value,'1440');
+ await recargar.events.click();assert.equal(recargar.disabled,false);
+});

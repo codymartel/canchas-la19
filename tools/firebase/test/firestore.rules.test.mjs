@@ -670,7 +670,7 @@ test('una reserva publica directa guarda segmentos canonicos y datos privados', 
     id: 'r_publica_000001',
     uid: ANON_A,
     publicRequest: true,
-    duration: 30,
+    duration: 60,
   });
   await assertSucceeds(bookingBatch(db, booking).commit());
   const stored = (await getDoc(booking.ref)).data();
@@ -680,14 +680,14 @@ test('una reserva publica directa guarda segmentos canonicos y datos privados', 
   assert.equal(stored.clienteNombre, 'Cliente privado');
   assert.equal(stored.telefono, '+51999888777');
   assert.equal(stored.metodoPago, '');
-  assert.deepEqual(stored.minutos, ['600']);
+  assert.deepEqual(stored.minutos, ['600', '630']);
   assert.ok(stored.inicio instanceof Timestamp);
 
   const extra = makeBooking(db, {
     id: 'r_publica_extra01',
     uid: ANON_A,
     publicRequest: true,
-    duration: 30,
+    duration: 60,
     minute: 660,
     patch: { notaPrivada: 'campo no autorizado' },
   });
@@ -697,8 +697,8 @@ test('una reserva publica directa guarda segmentos canonicos y datos privados', 
     id: 'r_publica_pago001',
     uid: ANON_A,
     publicRequest: true,
-    duration: 30,
-    minute: 690,
+    duration: 60,
+    minute: 720,
     patch: { metodoPago: 'efectivo' },
   });
   await assertFails(bookingBatch(db, pagoInventado).commit());
@@ -707,7 +707,7 @@ test('una reserva publica directa guarda segmentos canonicos y datos privados', 
     id: 'r_publica_monto01',
     uid: ANON_A,
     publicRequest: true,
-    duration: 30,
+    duration: 60,
     minute: 720,
     patch: { montoCentimos: 1000, saldoCentimos: 1000 },
   });
@@ -748,7 +748,7 @@ test('los datos de reservas son privados incluso para otros solicitantes publico
     id: 'r_privada_000001',
     uid: ANON_A,
     publicRequest: true,
-    duration: 30,
+    duration: 60,
   });
   await bookingBatch(owner, booking).commit();
   await assertSucceeds(getDoc(booking.ref));
@@ -836,7 +836,7 @@ for (const duration of [30, 60, 90, 120, 150, 180, 210, 240, 300, 360, 420, 480,
     await assertEstadoYAgenda(employee, personal, duration <= 180 ? 'confirmada' : 'pendiente');
   });
 
-  test(`el publico reserva ${duration} minutos dentro de los limites`, async () => {
+  test(`el publico ${duration % 60 ? "rechaza" : "reserva"} ${duration} minutos`, async () => {
     await seedApplication();
     const publicDb = anonymous(ANON_A).firestore();
     const publica = makeBooking(publicDb, {
@@ -845,6 +845,10 @@ for (const duration of [30, 60, 90, 120, 150, 180, 210, 240, 300, 360, 420, 480,
       publicRequest: true,
       duration,
     });
+    if (duration % 60) {
+      await assertFails(bookingBatch(publicDb, publica).commit());
+      return;
+    }
     await assertSucceeds(bookingBatch(publicDb, publica).commit());
     await assertEstadoYAgenda(
       publicDb,
@@ -1590,6 +1594,29 @@ test('direccion y tarifa pendientes permiten reservar sin registrar pagos', asyn
   const publicDb = anonymous(ANON_A).firestore();
   const publico = makeBooking(publicDb,{id:'r_publico_config',uid:ANON_A,minute:900,publicRequest:true});
   await assertSucceeds(bookingBatch(publicDb, publico).commit());
+});
+
+test('solo personal registra medias horas; la web exige horas e inicios completos', async () => {
+  await seedApplication();
+  const publico = anonymous(ANON_A).firestore();
+  await assertFails(bookingBatch(publico, makeBooking(publico,{id:'r_publico_media_hora',uid:ANON_A,minute:900,duration:30,publicRequest:true})).commit());
+  await assertFails(bookingBatch(publico, makeBooking(publico,{id:'r_publico_media_inicio',uid:ANON_A,minute:930,duration:60,publicRequest:true})).commit());
+  const personal = verified(EMPLOYEE).firestore();
+  await assertSucceeds(bookingBatch(personal, makeBooking(personal,{id:'especial-personal',uid:EMPLOYEE,minute:930,duration:30})).commit());
+});
+
+test('una reserva publica anterior con inicio a media hora sigue visible y cancelable', async () => {
+  await seedApplication();
+  await environment.withSecurityRulesDisabled(async context => {
+    const db=context.firestore();
+    await bookingBatch(db,makeBooking(db,{id:'r_publica_legacy_hora',uid:ANON_A,minute:1290,duration:60,publicRequest:true})).commit();
+  });
+  const personal=verified(EMPLOYEE).firestore();
+  const anterior=makeBooking(personal,{id:'r_publica_legacy_hora',uid:ANON_A,minute:1290,duration:60,publicRequest:true});
+  await assertSucceeds(getDoc(anterior.ref));
+  await assertSucceeds(cancellationBatch(personal,anterior,EMPLOYEE).commit());
+  assert.equal((await getDoc(anterior.ref)).data().estado,'cancelada');
+  assert.deepEqual((await getDoc(publicSlotRef(personal,anterior))).data(),{ocupados:{}});
 });
 
 test('sin horario global configurado ninguna cancha admite reservas', async () => {

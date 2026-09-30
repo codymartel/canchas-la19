@@ -368,6 +368,8 @@ service cloud.firestore {
         && id.size() >= 10 && id.size() <= 102
         && id.matches('^r_[A-Za-z0-9_-]*$')
         && r.origen == 'publico'
+        && r.duracion % 60 == 0
+        && r.minuto % 60 == 0
         && r.solicitanteUid == request.auth.uid
         && r.creadoPor == request.auth.uid
         && r.atendidoPor == ''

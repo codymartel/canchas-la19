@@ -1,3 +1,4 @@
+import {conTiempoLimite} from './lectura.js';
 import {hora,soles,hoyLima,diaOperativoLima,iniciosDeTurno,siguienteDia,leerHorario} from './disponibilidad.js';
 import {solicitarReserva} from './reserva.js';
 
@@ -71,7 +72,7 @@ function tarjetasCanchas(){
     const p=document.createElement('p');
     if(!cancha){p.textContent='Información pendiente de habilitación por el personal.';article.className='inactiva';}
     else{
-      const turno=horario?.duracionTurnoMinutos;
+      const turno=horario?60:null;
       const proximos=RESERVAS&&turno?iniciosDeTurno(libresCancha(cancha.id,$('dia').value),turno,horario.aperturaMinuto,turno).slice(0,4).map(hora).join(' · '):'';
       const lineas=[cancha.direccion||'Dirección pendiente',Number.isInteger(cancha.tarifaTurnoCentimos)?`${soles(cancha.tarifaTurnoCentimos)} por turno`:'Tarifa pendiente'];
       if(RESERVAS)lineas.push(`Próximos inicios: ${proximos||'sin horarios libres'}`);
@@ -83,7 +84,7 @@ function tarjetasCanchas(){
       caption.textContent=`Día operativo ${$('dia').value} · 07:00 a 01:00 (+1 día) · America/Lima`;table.append(caption);
       const head=document.createElement('tr');for(const label of ['Hora','Disponibilidad']){const th=document.createElement('th');th.textContent=label;head.append(th);}table.append(head);
       const usados=ocupacion.get(id)??new Set();
-      for(let m=horario.aperturaMinuto;m<(horario.cierreMinuto>horario.aperturaMinuto?horario.cierreMinuto:1440+horario.cierreMinuto);m+=30){const row=document.createElement('tr');for(const label of [hora(m)+' – '+hora(m+30),usados.has(m)?'Ocupado':'Libre']){const td=document.createElement('td');td.textContent=label;row.append(td);}table.append(row);}
+      for(let m=horario.aperturaMinuto;m<(horario.cierreMinuto>horario.aperturaMinuto?horario.cierreMinuto:1440+horario.cierreMinuto);m+=60){const row=document.createElement('tr');for(const label of [hora(m)+' – '+hora(m+60),(usados.has(m)||usados.has(m+30))?'Ocupado':'Libre']){const td=document.createElement('td');td.textContent=label;row.append(td);}table.append(row);}
       article.append(table);
     }
     contenedor.append(article);
@@ -100,9 +101,9 @@ function tarjetasPromociones(){
 }
 function actualizarHoras(){
   const cancha=canchas.find(c=>c.id===$('cancha').value),anterior=$('minuto').value;
-  const turno=horario?.duracionTurnoMinutos,duracionAnterior=Number($('duracion').value);
+  const turno=horario?60:null,duracionAnterior=Number($('duracion').value);
   const duraciones=cancha&&turno?Array.from({length:Math.floor(600/turno)},(_,i)=>(i+1)*turno):[];
-  $('duracion').replaceChildren(...duraciones.map(valor=>opcion(valor,valor===turno?`${valor} minutos (1 turno)`:`${valor} minutos (${valor/turno} turnos)`)));
+  $('duracion').replaceChildren(...duraciones.map(valor=>opcion(valor,`${valor/60} ${valor===60?'hora':'horas'}`)));
   if(duraciones.includes(duracionAnterior))$('duracion').value=String(duracionAnterior);
   const libres=cancha&&turno?iniciosDeTurno(libresCancha(cancha.id,$('dia').value),Number($('duracion').value),horario.aperturaMinuto,turno):[];
   $('minuto').replaceChildren(opcion('','Selecciona horario'),...libres.map(m=>opcion(m,hora(m))));
@@ -138,39 +139,44 @@ async function cargarConfiguracion(){
   }
 }
 async function cargar(){
-  if(cargando||solicitud)return;
-  cargando=true;const actual=++revision,dia=$('dia').value;$('recargar').disabled=true;
-  mensaje('Consultando el servidor…');
+  if(cargando)return;
+  cargando=true;
+  const actual=++revision,dia=$('dia').value;
+  $('recargar').disabled=true;
+  if(!solicitud)mensaje('Consultando el servidor…');
   try{
-    if(RESERVAS&&!auth.currentUser)await auth.signInAnonymously();
-    const canchasSnap=await db.collection('canchas_publicas').where('activa','==',true).get({source:'server'});
-    const promosSnap=await db.collection('promociones_publicas').where('activa','==',true).get({source:'server'});
+    if(RESERVAS&&!auth.currentUser)await conTiempoLimite(auth.signInAnonymously());
+    if(!horario)await conTiempoLimite(cargarConfiguracion());
+    const [canchasSnap,promosSnap]=await conTiempoLimite(Promise.all([
+      db.collection('canchas_publicas').where('activa','==',true).get({source:'server'}),
+      db.collection('promociones_publicas').where('activa','==',true).get({source:'server'})
+    ]));
+    const nuevas=canchasSnap.docs.map(d=>({id:d.id,...d.data()}));
+    const dias=await conTiempoLimite(Promise.all(nuevas.map(c=>rutaDia(c.id,dia).get({source:'server'}))));
     if(actual!==revision||dia!==$('dia').value)return;
-    canchas=canchasSnap.docs.map(d=>({id:d.id,...d.data()}));
-    promociones=promosSnap.docs.map(d=>({id:d.id,...d.data()}));
     for(const cancelar of suscripciones)cancelar();suscripciones=[];
-    ocupacion=new Map();
-    const lecturas=[];
+    canchas=nuevas;promociones=promosSnap.docs.map(d=>({id:d.id,...d.data()}));
+    ocupacion=new Map(canchas.map((c,i)=>[c.id,new Set(Object.keys(dias[i].data()?.ocupados??{}).map(Number))]));
     for(const cancha of canchas){
-      lecturas.push(new Promise((resolve,reject)=>{
-        const cancelar=rutaDia(cancha.id,dia).onSnapshot({includeMetadataChanges:true},snap=>{
-          if(actual!==revision||dia!==$('dia').value)return;
-          if(snap.metadata.fromCache)return;
-          ocupacion.set(cancha.id,new Set(Object.keys(snap.data()?.ocupados??{}).map(Number)));
-          tarjetasCanchas();actualizarHoras();resolve();
-        },reject);suscripciones.push(cancelar);
-      }));
+      const cancelar=rutaDia(cancha.id,dia).onSnapshot({includeMetadataChanges:true},snap=>{
+        if(actual!==revision||dia!==$('dia').value||snap.metadata.fromCache)return;
+        ocupacion.set(cancha.id,new Set(Object.keys(snap.data()?.ocupados??{}).map(Number)));
+        tarjetasCanchas();if(!solicitud)actualizarHoras();
+      },error=>{if(actual===revision&&!solicitud)mensaje(errorMensaje(error),'error');});
+      suscripciones.push(cancelar);
     }
-    await Promise.all(lecturas);
-    const anterior=$('cancha').value;
-    $('cancha').replaceChildren(opcion('','Selecciona cancha'),...canchas.map(c=>opcion(c.id,`${nombres[c.sedeId]} / ${c.nombre}`)));
-    if(canchas.some(c=>c.id===anterior))$('cancha').value=anterior;
-    tarjetasCanchas();tarjetasPromociones();actualizarHoras();
-    mensaje(!RESERVAS?'Reservas en línea aún no habilitadas. Estado pendiente.'
-      :!horario?'El horario global aun no esta publicado. No se pueden solicitar reservas.'
-      :canchas.length?'Disponibilidad confirmada por el servidor. El horario se asegura al enviar.':'No hay canchas habilitadas todavía.','ok');
-  }catch(error){mensaje(errorMensaje(error),'error');}
-  finally{cargando=false;$('recargar').disabled=false;}
+    if(!solicitud){
+      const anterior=$('cancha').value;
+      $('cancha').replaceChildren(opcion('','Selecciona cancha'),...canchas.map(c=>opcion(c.id,`${nombres[c.sedeId]} / ${c.nombre}`)));
+      if(canchas.some(c=>c.id===anterior))$('cancha').value=anterior;
+      actualizarHoras();
+      mensaje(!RESERVAS?'Reservas en línea aún no habilitadas. Estado pendiente.'
+        :!horario?'El horario global aun no esta publicado. No se pueden solicitar reservas.'
+        :canchas.length?'Disponibilidad confirmada por el servidor. El horario se asegura al enviar.':'No hay canchas habilitadas todavía.','ok');
+    }
+    tarjetasCanchas();tarjetasPromociones();
+  }catch(error){if(actual===revision)mensaje(errorMensaje(error),'error');}
+  finally{if(actual===revision){cargando=false;$('recargar').disabled=false;}}
 }
 $('dia').value=diaOperativoLima();$('dia').min=diaOperativoLima();$('dia').max=siguienteDia(hoyLima(),179);
 $('dia').addEventListener('change',()=>{revision++;cargando=false;cargar();});
@@ -203,6 +209,5 @@ $('reserva').addEventListener('submit',async event=>{
 // La configuracion publica trae el horario global: se carga antes que las
 // canchas para no pintar disponibilidad con un horario que aun no se conoce.
 aplicarEstadoReservas();
-await cargarConfiguracion();
 await cargar();
 // La ocupacion llega por listeners de Firestore, sin recargar la pagina.

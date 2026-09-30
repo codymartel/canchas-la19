@@ -3,7 +3,10 @@
 ## Etapa operativa autorizada (29 de septiembre de 2026)
 
 La configuracion real usa apertura 420 (07:00), cierre 60 (01:00 del dia siguiente),
-turnos de 30 minutos y America/Lima. Cada dia operativo tiene 36 franjas, incluidas
+unidades internas de 30 minutos y America/Lima. Las tablas y reservas normales van
+de hora en hora (18 filas por cancha). Solo el personal puede activar casos especiales
+de 30 minutos; las reglas rechazan altas publicas con inicio o duracion a media hora.
+La ocupacion conserva 36 unidades para no perder reservas parciales existentes, incluidas
 1440 y 1470 de la madrugada siguiente. El selector de hoy conserva el dia operativo
 anterior antes de las 07:00. Direccion y tarifa pueden quedar pendientes; solo la
 habilitacion de la cancha determina su reservabilidad, sin relajar privacidad ni

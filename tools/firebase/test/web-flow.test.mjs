@@ -136,7 +136,7 @@ const request = {
   dia: day,
   canchaId: 'la-19',
   minuto: 1140,
-  duracion: 30,
+  duracion: 60,
   nombre: 'PRUEBA WEB EMULADOR',
   telefono: '+51900000000',
 };
@@ -164,12 +164,12 @@ const privateAgenda = await assertSucceeds(getDoc(doc(
   staff,
   `negocios/${BUSINESS}/agenda/la-19/dias/${day}`,
 )));
-assert.deepEqual(privateAgenda.data().ocupados, { '1140': true });
+assert.deepEqual(privateAgenda.data().ocupados, { '1140': true, '1170': true });
 assert.equal(privateAgenda.data().ultimaOperacion.reservaId, created.id);
 const publicAgenda = await db.doc(
   `agenda_publica/${BUSINESS}/canchas/la-19/dias/${day}`,
 ).get({ source: 'server' });
-assert.deepEqual(publicAgenda.data(), { ocupados: { '1140': true } });
+assert.deepEqual(publicAgenda.data(), { ocupados: { '1140': true, '1170': true } });
 
 const secondApp = firebase.initializeApp({
   apiKey: 'demo-key',
@@ -248,7 +248,7 @@ const winner=race.find(r=>r.status==='fulfilled').value.id;await resolver(winner
 const larga=await reservar({requestId:'cinco-horas',canchaId:'la-23',minuto:600,duracion:300});
 assert.equal(larga.estado,'pendiente');assert.equal(vistas.get('la-23')['600'],undefined);
 await assertFails(writeBatch(outsider).update(doc(outsider,'negocios/'+BUSINESS+'/reservas/'+larga.id),{estado:'confirmada',version:2,atendidoPor:OUTSIDER}).commit());
-const corta=await reservar({requestId:'interferencia',canchaId:'la-23',minuto:660,duracion:30});
+const corta=await reservar({requestId:'interferencia',canchaId:'la-23',minuto:660,duracion:60});
 await assert.rejects(resolver(larga.id,'confirmada'),/Horario ocupado/);
 await resolver(corta.id,'cancelada');await resolver(larga.id,'confirmada');
 await esperar(()=>vistas.get('la-23')['600']===true&&privadas.get('la-23')['870']===true);

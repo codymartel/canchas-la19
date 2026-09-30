@@ -283,7 +283,7 @@ class _TablasAgenda extends StatelessWidget {
                                   for (
                                     var minuto = h.apertura;
                                     minuto < limite;
-                                    minuto += 30
+                                    minuto += 60
                                   )
                                     _fila(cancha, minuto),
                                   for (final r in reservas.where(
@@ -318,13 +318,16 @@ class _TablasAgenda extends StatelessWidget {
       (r) =>
           r.texto('canchaId') == cancha &&
           r.ocupa &&
-          minuto >= r.entero('minuto') &&
+          minuto + 60 > r.entero('minuto') &&
           minuto < r.entero('minuto') + r.entero('duracion'),
     );
-    final r = candidatas.isEmpty ? null : candidatas.first;
-    final ocupado = ocupacion[cancha]?.contains(minuto) == true;
+    final lista = candidatas.toList();
+    final ocupado = [
+      minuto,
+      minuto + 30,
+    ].any((m) => ocupacion[cancha]?.contains(m) == true);
     return InkWell(
-      onTap: r == null ? null : () => onDetalle(r),
+      onTap: null,
       child: Container(
         constraints: const BoxConstraints(minHeight: 48),
         padding: const EdgeInsets.symmetric(vertical: 6),
@@ -336,19 +339,31 @@ class _TablasAgenda extends StatelessWidget {
           children: [
             SizedBox(
               width: 105,
-              child: Text('${hora(minuto)}\n${hora(minuto + 30)}'),
+              child: Text('${hora(minuto)}\n${hora(minuto + 60)}'),
             ),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  if (r != null) Text(r.texto('clienteNombre')),
-                  if (r != null) Text(r.texto('telefono')),
-                  _EstadoReserva(
-                    estado: r?.estado ?? (ocupado ? 'Ocupado' : 'Libre'),
-                  ),
-                  if (r?.texto('atendidoPor').isNotEmpty == true)
-                    Text('Atiende: ${r!.texto('atendidoPor')}'),
+                  if (lista.isEmpty)
+                    _EstadoReserva(estado: ocupado ? 'Ocupado' : 'Libre'),
+                  for (final r in lista)
+                    InkWell(
+                      onTap: () => onDetalle(r),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(r.texto('clienteNombre')),
+                          Text(r.texto('telefono')),
+                          Text(
+                            '${hora(r.entero('minuto'))} – ${hora(r.entero('minuto') + r.entero('duracion'))}',
+                          ),
+                          _EstadoReserva(estado: r.estado),
+                          if (r.texto('atendidoPor').isNotEmpty)
+                            Text('Atiende: ${r.texto('atendidoPor')}'),
+                        ],
+                      ),
+                    ),
                 ],
               ),
             ),

@@ -39,7 +39,7 @@ class _ReservaDialogState extends State<ReservaDialog> {
   int minuto = 1080, duracion = 60;
   int canchasNoReservables = 0;
   HorarioNegocio? horario;
-  bool enviado = false;
+  bool enviado = false, especial = false;
   Map<String, dynamic>? solicitud;
   StreamSubscription<HorarioNegocio?>? _subHorario;
 
@@ -66,7 +66,7 @@ class _ReservaDialogState extends State<ReservaDialog> {
     });
   }
 
-  int get duracionTurno => horario?.duracionTurno ?? 60;
+  int get duracionTurno => especial ? 30 : 60;
 
   /// Solo multiplos del turno base que ademas admite el servidor.
   List<int> get duraciones => duracionesReserva
@@ -82,10 +82,12 @@ class _ReservaDialogState extends State<ReservaDialog> {
         widget.provider.ocupacionPorCancha[canchaId] ?? const <int>{};
     return iniciosDeTurno(horario: actual, duracion: duracion)
         .where(
-          (inicio) => minutosDe(
-            minuto: inicio,
-            duracion: duracion,
-          ).every((valor) => !ocupados.contains(int.parse(valor))),
+          (inicio) =>
+              (inicio - actual.apertura) % duracionTurno == 0 &&
+              minutosDe(
+                minuto: inicio,
+                duracion: duracion,
+              ).every((valor) => !ocupados.contains(int.parse(valor))),
         )
         .toList();
   }
@@ -167,9 +169,25 @@ class _ReservaDialogState extends State<ReservaDialog> {
       ),
       if (horario != null)
         Text(
-          'Turno de $duracionTurno min · ${horario!.resumen}'
+          'Reservas de ${especial ? '30 minutos (caso especial)' : 'una hora'} · ${horario!.resumen}'
           '${horario!.cruzaMedianoche ? ' · continua despues de medianoche' : ''}',
         ),
+      SwitchListTile(
+        title: const Text('Caso especial: permitir 30 minutos'),
+        subtitle: const Text(
+          'Solo para atención del personal, por ejemplo policías.',
+        ),
+        value: especial,
+        onChanged: enviado
+            ? null
+            : (valor) => setState(() {
+                especial = valor;
+                duracion = duracionTurno;
+                if (!inicios.contains(minuto) && inicios.isNotEmpty) {
+                  minuto = inicios.first;
+                }
+              }),
+      ),
       if (canchasNoReservables > 0)
         Text(
           '$canchasNoReservables cancha(s) sin habilitacion: '
@@ -206,9 +224,9 @@ class _ReservaDialogState extends State<ReservaDialog> {
               (valor) => DropdownMenuItem(
                 value: valor,
                 child: Text(
-                  valor == duracionTurno
-                      ? '$valor minutos (1 turno)'
-                      : '$valor minutos (${valor ~/ duracionTurno} turnos)',
+                  especial
+                      ? '$valor minutos'
+                      : '${valor ~/ 60} ${valor == 60 ? 'hora' : 'horas'}',
                 ),
               ),
             )
