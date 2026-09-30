@@ -28,7 +28,12 @@ if (!process.env.FIRESTORE_EMULATOR_HOST) {
 }
 
 const here = dirname(fileURLToPath(import.meta.url));
-const rules = readFileSync(join(here, '..', '..', '..', 'mobile', 'firestore.rules'), 'utf8');
+// RULES_PATH permite correr la suite contra una copia mutada (ver
+// mutar-operadores.mjs). Sin la variable se leen las reglas activas.
+const rules = readFileSync(
+  process.env.RULES_PATH || join(here, '..', '..', '..', 'mobile', 'firestore.rules'),
+  'utf8',
+);
 
 const PROJECT_ID = 'demo-grass-local';
 const BUSINESS = 'grass-sintetico';
@@ -303,11 +308,11 @@ async function assertEstadoYAgenda(escritor, booking, esperado, lector = escrito
   return stored;
 }
 
-function employeeRecord({ active = true, reservations = true } = {}) {
+function employeeRecord({ active = true, reservations = true, rol = 'empleado_control' } = {}) {
   return {
     nombre: 'Empleado de control',
     email: 'empleado@test.local',
-    rol: 'empleado_control',
+    rol,
     activo: active,
     permisos: {
       agenda: true,
@@ -530,6 +535,63 @@ test('empleados activos, desactivados y no vinculados quedan correctamente aisla
   await assertFails(getDocs(query(collection(deactivated, 'negocios', BUSINESS, 'reservas'), limit(1500))));
   await assertFails(getDoc(doc(unlinked, 'negocios', BUSINESS)));
   await assertFails(getDocs(query(collection(unlinked, 'negocios', BUSINESS, 'reservas'), limit(1500))));
+});
+
+test('un empleado desactivado tampoco puede escribir', async () => {
+  await seedApplication();
+  const deactivated = verified(DEACTIVATED).firestore();
+  // El aislamiento de arriba solo mira lecturas. Aqui se intenta escribir de
+  // verdad: una reserva corta confirmada con su agenda y su espejo.
+  const booking = makeBooking(deactivated, { id: 'r_desactivado', uid: DEACTIVATED, duration: 30 });
+  await assertFails(bookingBatch(deactivated, booking).commit());
+  // Y aprobar una solicitud larga, que es la via de escritura mas delicada.
+  const pendiente = makeBooking(deactivated, {
+    id: 'r_desactivado_larga', uid: EMPLOYEE, duration: 240, minute: 900,
+  });
+  await seedBooking(pendiente);
+  await assertFails(approvalBatch(deactivated, pendiente, DEACTIVATED).commit());
+});
+
+test('reclamar la configuracion exige correo verificado y ancla sin dono', async () => {
+  // Sistema sin ancla: la unica forma de crearlo es reclamoValido.
+  const sinVerificar = unverified('usuario-sin-verificar').firestore();
+  const ancla = {
+    administradorUid: 'usuario-sin-verificar',
+    negocioId: BUSINESS,
+    zonaHoraria: 'America/Lima',
+  };
+  await assertFails(setDoc(doc(sinVerificar, 'sistema', 'grass'), ancla));
+  await assertSucceeds(setDoc(doc(verified('usuario-sin-verificar').firestore(), 'sistema', 'grass'), ancla));
+  // Ya existe el ancla: nadie puede reclamar ni sustituir al administrador.
+  await assertFails(setDoc(doc(verified(UNLINKED).firestore(), 'sistema', 'grass'), {
+    ...ancla,
+    administradorUid: UNLINKED,
+  }));
+});
+
+test('un rol que no sea de control no escribe, y sin sesion tampoco', async () => {
+  await seedApplication();
+  await environment.withSecurityRulesDisabled(async (context) => {
+    await setDoc(doc(context.firestore(), 'negocios', BUSINESS, 'empleados', NO_RESERVATIONS),
+      employeeRecord({ rol: 'recepcion' }));
+  });
+  const recepcion = verified(NO_RESERVATIONS).firestore();
+  const booking = makeBooking(recepcion, {
+    id: 'r_rol_recepcion', uid: NO_RESERVATIONS, duration: 30,
+  });
+  await assertFails(bookingBatch(recepcion, booking).commit());
+
+  // Sin sesion no se entra ni por la rama de empleado ni por la de admin.
+  const sinSesion = environment.unauthenticatedContext().firestore();
+  const anonima = makeBooking(sinSesion, {
+    id: 'r_sin_sesion', uid: ANON_A, duration: 30, publicRequest: true,
+  });
+  await assertFails(bookingBatch(sinSesion, anonima).commit());
+  await assertFails(setDoc(doc(sinSesion, 'sistema', 'grass'), {
+    administradorUid: ANON_A,
+    negocioId: BUSINESS,
+    zonaHoraria: 'America/Lima',
+  }));
 });
 
 test('los negocios no se enumeran; se consulta el id configurado', async () => {

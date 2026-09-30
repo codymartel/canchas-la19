@@ -138,7 +138,7 @@ Para habilitarla se necesita un mecanismo de firma confiable que entregue parame
 
 La web publicada mantiene el formulario deshabilitado hasta una activacion deliberada. El limite de mil expresiones es un limite oficial de Firestore Security Rules por request, no una particularidad del emulador.
 
-La agenda diaria espejada evita una lectura por franja y no publica identificadores privados. Las 55 pruebas de reglas activas y las 20 pruebas del prototipo cubren duraciones de 30 a 600 minutos, cruce de medianoche, tres canchas, concurrencia, privacidad, ataques, aprobacion y cancelacion sin agotar mil expresiones.
+La agenda diaria espejada evita una lectura por franja y no publica identificadores privados. Las 71 pruebas de reglas activas y las 20 pruebas del prototipo cubren duraciones de 30 a 600 minutos, cruce de medianoche, tres canchas, concurrencia, privacidad, ataques, aprobacion y cancelacion sin agotar mil expresiones.
 
 Mientras siga abierto el bloqueo:
 
@@ -165,7 +165,38 @@ El 4 nunca se versiono: no existe ninguna regla, prueba, script ni documento en 
 
 ### Limites de tamano de un lote
 
-La operacion mas grande que las reglas admiten es la aprobacion de una reserva de 600 minutos: son 20 minutos operados sobre un dia que ya puede llevar 16 ocupados, hasta el tope de 36 entradas que fija `d.ocupados.size() <= 36`. Ese tope coincide con los 36 mediosfos del dia operativo (420 a 1470), de modo que no se puede superar sin salirse del dia. En el peor caso estatico cada documento evaluado encadena como mucho 12 accesos (`puedeResolverCancha` 10 y `cambioOcupaAgenda` 2 al transicionar la reserva; `agendaDiaValida` 7 y `proyeccionCambiaIgual` 5 al escribir la agenda; `agendaCambiaIgual` 5 al escribir el espejo), y el cortocircuito los reduce en la practica. La suite incluye ese caso como prueba y el emulador no reporta ni `maximum of 1000 expressions` ni limites de accesos.
+La operacion mas grande que las reglas admiten es la aprobacion de una reserva de 600 minutos: son 20 minutos operados sobre un dia que ya puede llevar 16 ocupados, hasta el tope de 36 entradas que fija `d.ocupados.size() <= 36`. Ese tope coincide con los 36 mediosfos del dia operativo (420 a 1470), de modo que no se puede superar sin salirse del dia.
+
+Sobre el presupuesto de accesos a documentos, el limite oficial es de 10 llamadas a `exists()`, `get()` y `getAfter()` por escritura, y de 20 por lote o transaccion, y ese limite de 10 se aplica tambien a cada escritura del lote. Medido con `tools/firebase/test/sonda-presupuesto.mjs`, que inyecta accesos sinteticos sobre una copia de las reglas y encuentra por busqueda binaria el umbral exacto de denegacion, el escenario mas pesado consume 8 accesos en total: 4 al transicionar la reserva, 3 al escribir la agenda privada y 1 al escribir el espejo publico. Quedan 6, 7 y 9 de margen por escritura, y 12 de los 20 del lote.
+
+El contraste con el conteo estatico es la parte importante: contar los puntos donde aparecen `get` y `exists` da hasta 12 por documento y 29 en el lote, muy por encima de ambos limites. Ese numero no es el real. El cortocircuito de `&&` y `||` evita la mayoria de las llamadas, y las llamadas repetidas sobre el mismo documento se cachean. La sonda confirma ademas que el emulador si aplica los dos limites, porque deniega exactamente al cruzarlos y acepta un acceso menos, de modo que aqui no hay margen oculto del que depender.
+
+Los limites de 1000 expresiones y los de accesos son dos cosas distintas y ambos se respetan: el tope de expresiones nunca aparecio en la suite, y el presupuesto de accesos quedo medido, no supuesto.
+
+### Que expresion cubre a cual
+
+Al mutar por separado las condiciones de las reglas que sostienen horarios, solapamientos, ocupacion y permisos, 20 de 45 mutaciones las detecta la suite y 19 sobreviven. Ninguna supervivencia abre una escritura indebida: en todas hay otra linea que impone lo mismo. Se conservan como defensa legible, no como unica red.
+
+Del primer conjunto (`cambio.hasOnly(op.minutos)` y `!antes.keys().hasAny(op.minutos)` en `agendaDiaValida`) ya se habia hecho el analisis detalle antes: la igualdad `op.minutos == r.minutos` sobrevive porque `cambioOcupaAgenda` construye `op` a partir de `r.minutos`, de modo que es una verdad de construccion.
+
+La tanda priorizada que si se ejecuto cambio una condicion a la vez sobre una copia temporal, corrio la suite completa y restauro la copia, con `tools/firebase/test/mutar-prioritarias.mjs`. Las supervivencias que quedan, y por que no abren nada:
+
+- `d.ocupados.keys().hasAll(op.minutos)` en `mobile/firestore.rules:488`: la pareja `cambio.hasAll(op.minutos)` en 483 exige que todos los minutos de la operacion cambien, asi que un subconjunto no llega a ser ocupacion valida.
+- `d.ocupados.size() <= 36` en 475: 36 es el tope del dia operativo (420 a 1470) y `cabe` ya impide salirse, asi que un mapa mayor solo podria contener minutos fuera del dia, que otra regla rechaza.
+- `op.tipo == 'ocupar'` en 485: la rama de liberar exige `r.estado == 'cancelada'` y `op.minutos == r.minutos`, de modo que cualquier tipo distinto sigue atado a la reserva correcta.
+- `r.estado == 'cancelada'` en 497 y `get(ruta).data.estado == 'confirmada'` en 499: liberar exige ademas `antes.keys().hasAll(op.minutos)` y que la reserva exista, asi que solo una reserva confirmada puede liberar sus propios minutos.
+- `antes.keys().hasAll(op.minutos)` en 501 al cambiarlo por `hasAny`: la rama de liberar ya exige que la operacion libere exactamente los minutos de la reserva.
+- `r.duracion > 180` en 494 y `r.duracion <= 180` en 490: la regla de version (`get(ruta).data.version + 1 == r.version`, detectada si se cambia) y el estado `pendiente` ya separan el alta de una reserva larga de la confirmacion de una corta.
+- `antes.duracion > 180` en `transicionValida` 404: una reserva corta nunca esta en `pendiente` porque el alta la crea confirmada, asi que la condicion no cambia nada alcanzable.
+- `cambioOcupaAgenda(n, id, coleccion, antes)` en 406: el `antes` solo cambia la referencia de minutos, pero la comprobacion real es `op.minutos == r.minutos` y la suite detecta esa linea si se invierte.
+- `despues.ultimaOperacion.tipo == 'ocupar'` en 332: la rama de la agenda exige a su vez `op.tipo in ['ocupar', 'liberar']` y el estado de la reserva.
+- `int(minutos[0]) >= 0` en 432: `cabe` y `dentroHorario` ya exigen `r.minuto >= h.aperturaMinuto`.
+- `int(minutos[cantidad - 1]) < 1500` en 453, `cantidad <= 21` en 429 y `cantidad >= 0` en 429: la duracion maxima de 600 minutos y `cabe` acotan el rango; un minuto fuera de 420 a 1440 lo rechaza el horario.
+- `r.minuto + r.duracion <= h.cierreMinuto + 1500` en `cabe` 213: ampliar 1440 a 1500 solo permitiria cruzar medianoche unas horas mas alla del cierre, pero la suite detecta cualquier reserva normal que se pase del cierre, y `minutosOperacionValidos` exige que el ultimo minuto siga bajo 1500.
+- `r.duracion % h.duracionTurnoMinutos >= 0` en `dentroHorario` 221: `duracionValida` ya exige que la duracion sea multiplo de 30 y el turno del negocio sembrado es 30.
+- `autenticado() && exists(config)` en `puedeResolverCancha` 93: `verificado()` y `existeConfiguracion()` se comprueban mas abajo, en las ramas de admin y de empleado.
+- `!exists(rutaConfiguracion())` en `reclamoValido` 50: solo aplica a `create` de `sistema/grass`, y ese camino exige `verificado()` y que el ancla no exista, luego no hay nada que lo vuelva alcanzable.
+- `negocioId.size() <= 200` en 55: solo se muta el techo de longitud de un identificador, no un permiso.
 
 ### Pagos en cero, de punta a punta
 
