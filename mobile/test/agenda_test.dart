@@ -65,6 +65,8 @@ class PresenciaFake extends ChangeNotifier implements PresenciaControl {
   @override
   void observar(String dia) {}
   @override
+  Future<void> reconectar() async {}
+  @override
   Future<void> limpiar(String sesionId) async {}
   @override
   Future<bool> publicar({

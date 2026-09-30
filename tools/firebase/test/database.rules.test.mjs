@@ -127,5 +127,13 @@ await assertFails(get(ref(passwordUser(NUEVO).database(),
 await assertSucceeds(remove(ref(passwordUser(ANA).database(), path(ANA))));
 assert.equal((await get(ref(passwordUser(BETO).database(), path(ANA)))).exists(), false);
 
+for (const minuto of [1440, 1470]) {
+  const ruta = path(ANA).replace('/1140/', `/${minuto}/`);
+  await assertSucceeds(set(ref(passwordUser(ANA).database(), ruta), activity(ANA, SESION, {minuto: String(minuto)})));
+  await assertFails(get(ref(anonymous.database(), ruta)));
+  await assertSucceeds(remove(ref(passwordUser(ANA).database(), ruta)));
+}
+const fuera = path(ANA).replace('/1140/', '/1500/');
+await assertFails(set(ref(passwordUser(ANA).database(), fuera), activity(ANA, SESION, {minuto: '1500'})));
 await environment.cleanup();
 console.log('Realtime Database Rules: vinculacion, baja, cuenta ajena, propiedad y ACL OK.');

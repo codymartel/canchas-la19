@@ -10,6 +10,7 @@ abstract interface class PresenciaControl implements Listenable {
   String? get error;
   List<Actividad> get actividades;
   void observar(String dia);
+  Future<void> reconectar();
   Future<bool> publicar({
     required String sesionId,
     required String canchaId,

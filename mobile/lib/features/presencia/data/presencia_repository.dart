@@ -31,12 +31,19 @@ class PresenciaRepository {
       .onValue
       .map((event) => event.snapshot.value == true);
 
+  Future<void> reconectar() async {
+    await servicios.auth.currentUser?.getIdToken(true);
+    await servicios.realtime.goOffline();
+    await servicios.realtime.goOnline();
+  }
+
   Stream<List<Actividad>> observarDia(String dia) {
     late StreamController<List<Actividad>> salida;
     final valores = <String, List<Actividad>>{
       for (final id in sedesIds) id: [],
     };
     final subs = <StreamSubscription<DatabaseEvent>>[];
+    final recibidas = <String>{};
 
     List<Actividad> convertirValor(String cancha, Object? valor) {
       final resultado = <Actividad>[];
@@ -78,7 +85,8 @@ class PresenciaRepository {
           subs.add(
             ref.onValue.listen((event) {
               valores[cancha] = convertirValor(cancha, event.snapshot.value);
-              if (!salida.isClosed) {
+              recibidas.add(cancha);
+              if (!salida.isClosed && recibidas.length == sedesIds.length) {
                 salida.add(valores.values.expand((lista) => lista).toList());
               }
             }, onError: salida.addError),
@@ -102,7 +110,9 @@ class PresenciaRepository {
     required String nombre,
     required String estado,
   }) => servicios.guardando(() async {
-    if (!esSede(canchaId) || !esDiaValido(dia) || !esFranjaValida(minuto)) {
+    if (!esSede(canchaId) ||
+        !esDiaValido(dia) ||
+        !esMinutoOperacionValido(minuto)) {
       throw const FormatException('Actividad temporal invalida.');
     }
     if (!['preparando', 'guardando'].contains(estado)) {

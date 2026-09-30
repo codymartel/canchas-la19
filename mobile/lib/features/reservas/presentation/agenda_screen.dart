@@ -132,6 +132,17 @@ class AgendaScreen extends StatelessWidget {
                     alignment: Alignment.centerLeft,
                     child: _EstadoConexion(estado: presencia.estadoConexion),
                   ),
+                  if (presencia.error != null)
+                    Text(
+                      presencia.error!,
+                      style: const TextStyle(color: Colors.red),
+                    ),
+                  if (!presencia.conectado)
+                    TextButton.icon(
+                      onPressed: presencia.reconectar,
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('Reconectar coordinación'),
+                    ),
                   const SizedBox(height: 8),
                   Wrap(
                     spacing: 8,
@@ -139,7 +150,7 @@ class AgendaScreen extends StatelessWidget {
                     children: [
                       for (final entrada in sedes.entries)
                         SizedBox(
-                          width: 245,
+                          width: 190,
                           child: Card(
                             color: provider.sede == entrada.key
                                 ? Theme.of(context).colorScheme.primaryContainer
@@ -248,7 +259,7 @@ class _TablasAgenda extends StatelessWidget {
       final limite = h.cruzaMedianoche ? h.cierre + 1440 : h.cierre;
       return LayoutBuilder(
         builder: (context, constraints) {
-          final ancho = constraints.maxWidth >= 1000
+          final ancho = constraints.maxWidth >= 700
               ? (constraints.maxWidth - 48) / 3
               : constraints.maxWidth - 24;
           return SingleChildScrollView(
@@ -257,7 +268,9 @@ class _TablasAgenda extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Dia operativo $dia · America/Lima · ${h.resumen}'),
+                  Text(
+                    'Dia operativo $dia · America/Lima · 07:00 a 01:00 (+1 dia) · filas de una hora',
+                  ),
                   if (reservas.isEmpty)
                     const Text('Sin reservas ni bloqueos para este día.'),
                   const SizedBox(height: 12),
@@ -338,7 +351,7 @@ class _TablasAgenda extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             SizedBox(
-              width: 105,
+              width: 80,
               child: Text('${hora(minuto)}\n${hora(minuto + 60)}'),
             ),
             Expanded(
@@ -359,8 +372,11 @@ class _TablasAgenda extends StatelessWidget {
                             '${hora(r.entero('minuto'))} – ${hora(r.entero('minuto') + r.entero('duracion'))}',
                           ),
                           _EstadoReserva(estado: r.estado),
-                          if (r.texto('atendidoPor').isNotEmpty)
-                            Text('Atiende: ${r.texto('atendidoPor')}'),
+                          Text(
+                            r.texto('atendidoPor').isEmpty
+                                ? 'Por atender'
+                                : 'Atiende: ${r.texto('atendidoPor')}',
+                          ),
                         ],
                       ),
                     ),
@@ -509,7 +525,7 @@ class _DetalleReservaState extends State<DetalleReserva> {
       titulo: r.texto('clienteNombre'),
       children: [
         Text(
-          '${r.texto('dia')} ${hora(r.entero('minuto'))} · ${r.entero('duracion')} minutos\n${r.texto('telefono')}\nOrigen: ${r.texto('origen')}\nEstado actual: ${r.estado}\nResponsable: ${r.texto('atendidoPor')}\nCreada: ${r.datos['createdAt']}\nActualizada: ${r.datos['updatedAt']}',
+          '${r.texto('dia')} ${hora(r.entero('minuto'))} · ${r.entero('duracion')} minutos\n${r.texto('telefono')}\nOrigen: ${r.texto('origen')}\nEstado actual: ${r.estado}\nResponsable: ${r.texto('atendidoPor').isEmpty ? 'Por atender' : r.texto('atendidoPor')}\nCreada: ${r.datos['createdAt']}\nActualizada: ${r.datos['updatedAt']}',
         ),
         if (r.estado == 'pendiente' && !asignado)
           const Text(

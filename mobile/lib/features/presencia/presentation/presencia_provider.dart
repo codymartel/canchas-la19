@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import '../../../core/data/servicios.dart';
 
 import '../data/presencia_repository.dart';
 import '../domain/actividad.dart';
@@ -13,6 +14,7 @@ class PresenciaProvider extends ChangeNotifier implements PresenciaControl {
   Timer? _sinConexion;
   late final Timer _caducidad;
   String _dia = '';
+  bool _transporte = false, _lecturaLista = false;
   @override
   bool conectado = false;
   @override
@@ -32,10 +34,14 @@ class PresenciaProvider extends ChangeNotifier implements PresenciaControl {
     });
     _conexion = repository.conexion.listen(
       (valor) {
-        conectado = valor;
+        _transporte = valor;
+        conectado = valor && _lecturaLista;
         _sinConexion?.cancel();
         if (valor) {
-          estadoConexion = EstadoConexionPresencia.conectado;
+          estadoConexion = conectado
+              ? EstadoConexionPresencia.conectado
+              : EstadoConexionPresencia.reconectando;
+          if (_dia.isNotEmpty && error != null) _observar(_dia, forzar: true);
         } else {
           estadoConexion = EstadoConexionPresencia.reconectando;
           _sinConexion = Timer(const Duration(seconds: 8), () {
@@ -45,7 +51,10 @@ class PresenciaProvider extends ChangeNotifier implements PresenciaControl {
         }
         notifyListeners();
       },
-      onError: (_) {
+      onError: (Object e) {
+        error = 'Coordinación en vivo: ${mensajeError(e)}';
+        debugPrint('Error de conexión de presencia: $e');
+        _transporte = false;
         conectado = false;
         estadoConexion = EstadoConexionPresencia.sinConexion;
         notifyListeners();
@@ -54,8 +63,12 @@ class PresenciaProvider extends ChangeNotifier implements PresenciaControl {
   }
 
   @override
-  void observar(String dia) {
-    if (_dia == dia) return;
+  void observar(String dia) => _observar(dia);
+
+  void _observar(String dia, {bool forzar = false}) {
+    if (_dia == dia && !forzar) return;
+    _lecturaLista = false;
+    conectado = false;
     _dia = dia;
     _actividades?.cancel();
     actividades = const [];
@@ -64,16 +77,40 @@ class PresenciaProvider extends ChangeNotifier implements PresenciaControl {
         .listen(
           (lista) {
             actividades = lista;
+            _lecturaLista = true;
+            conectado = _transporte;
+            estadoConexion = conectado
+                ? EstadoConexionPresencia.conectado
+                : EstadoConexionPresencia.reconectando;
             error = null;
             notifyListeners();
           },
           onError: (Object e) {
-            error = 'No se pudo leer la actividad temporal.';
+            error = 'Coordinación en vivo: ${mensajeError(e)}';
+            debugPrint('Error de lectura de presencia: $e');
+            _lecturaLista = false;
             conectado = false;
             estadoConexion = EstadoConexionPresencia.sinConexion;
             notifyListeners();
           },
         );
+  }
+
+  @override
+  Future<void> reconectar() async {
+    conectado = false;
+    _lecturaLista = false;
+    error = null;
+    estadoConexion = EstadoConexionPresencia.reconectando;
+    notifyListeners();
+    try {
+      await repository.reconectar().timeout(const Duration(seconds: 15));
+      if (_dia.isNotEmpty) _observar(_dia, forzar: true);
+    } catch (e) {
+      error = 'Coordinación en vivo: ${mensajeError(e)}';
+      estadoConexion = EstadoConexionPresencia.sinConexion;
+      notifyListeners();
+    }
   }
 
   @override
