@@ -1,14 +1,12 @@
 <!doctype html>
-<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="Grass Sintético en Huánuco. Las canchas La 19, La 23 y La 24. Próximamente informaremos las fechas y horarios de reserva."><title>Grass Sintético · Huánuco</title><link rel="stylesheet" href="styles.css"></head>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="Grass Sintético en Huánuco. Las canchas La 19, La 23 y La 24. Elige horas libres en La 19, La 23 y La 24."><title>Grass Sintético · Huánuco</title><link rel="stylesheet" href="styles.css"></head>
 <body><header><div><p class="ceja">HUÁNUCO · RESERVAS EN LÍNEA</p><h1 id="marca">Grass Sintético</h1><p id="descripcion">Tres canchas, una agenda compartida.</p><p id="contacto"></p></div><span class="balon" aria-hidden="true">19 · 23 · 24</span></header><main>
-  <section aria-labelledby="sedes-titulo"><h2 id="sedes-titulo">Nuestras sedes</h2><div id="sedes" class="grid"><article><h3>La 19</h3></article><article><h3>La 23</h3></article><article><h3>La 24</h3></article></div></section>
+  <section aria-labelledby="sedes-titulo"><h2 id="sedes-titulo">Elige tu horario</h2><p>Marca las horas libres de una cancha. Para reservar varias horas, deben ser consecutivas. <strong>✕ Ocupado</strong> no se puede seleccionar.</p><label class="fecha-agenda">Día operativo<input type="date" id="dia" required form="reserva"></label><div id="sedes" class="grid"><article><h3>La 19</h3></article><article><h3>La 23</h3></article><article><h3>La 24</h3></article></div></section>
   <section><h2>Reservas en línea</h2><p>Zona horaria de Huánuco (America/Lima).</p>
     <p id="aviso-reservas" class="aviso-reservas" role="status">Las reservas en línea aún no están habilitadas. Próximamente informaremos las fechas y los horarios disponibles.</p>
     <form id="reserva" hidden><fieldset id="campos"><legend>Horario y contacto</legend>
-      <label>Fecha<input type="date" id="dia" required></label>
-      <label>Sede y cancha<select id="cancha" required><option value="">Cargando canchas…</option></select></label>
-      <label>Duración<select id="duracion"><option value="">Selecciona una cancha</option></select></label>
-      <label>Inicio disponible<select id="minuto" required></select></label>
+      <input type="hidden" id="cancha"><input type="hidden" id="minuto"><input type="hidden" id="duracion">
+      <p id="seleccion" class="resumen-seleccion" aria-live="polite">Marca una hora libre en las tablas.</p>
       <p id="precio" aria-live="polite"></p>
       <label>Nombre completo<input id="nombre" autocomplete="name" maxlength="120" required></label>
       <label>Teléfono<input id="telefono" type="tel" autocomplete="tel" placeholder="+51 999 999 999" maxlength="24" required></label>

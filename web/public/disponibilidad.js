@@ -30,3 +30,11 @@ export function leerHorario(datos){
   if(apertura===cierre)return null;
   return {aperturaMinuto:apertura,cierreMinuto:cierre,duracionTurnoMinutos:turno};
 }
+
+// Una solicitud representa un único intervalo continuo, máximo diez horas.
+export function intervaloSeleccionado(horas){
+  const ordenadas=[...new Set(horas)].sort((a,b)=>a-b);
+  if(!ordenadas.length)return null;
+  if(ordenadas.length>10||ordenadas.some((m,i)=>!Number.isInteger(m)||m%60!==0||(i>0&&m!==ordenadas[i-1]+60)))throw new Error('Marca horas consecutivas de una cancha, hasta un máximo de 10 horas.');
+  return {minuto:ordenadas[0],duracion:ordenadas.length*60};
+}
