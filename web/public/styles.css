@@ -3,3 +3,5 @@
 table{border-collapse:collapse;width:100%;font-size:.9rem}th,td{padding:.45rem;text-align:left;border-bottom:1px solid #ddd}caption{padding:.6rem;text-align:left}.grid{align-items:start}
 
 .fecha-agenda{max-width:320px;margin-bottom:1.2rem}.hora-libre{flex-direction:row;align-items:center;gap:.6rem;cursor:pointer;min-height:44px}.hora-libre input{width:24px;min-height:24px;height:24px;accent-color:var(--verde)}.hora-ocupada{color:var(--error);font-weight:700}.hora-elegida{background:#dfedb8}.resumen-seleccion{grid-column:1/-1;padding:1rem;background:#edf5e7;border-left:4px solid var(--verde);font-weight:750}.hora-libre:has(input:disabled){cursor:default;opacity:.6}
+
+#precio,.aviso-pago{grid-column:1/-1}

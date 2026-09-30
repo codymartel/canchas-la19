@@ -80,7 +80,7 @@ function tarjetasCanchas(){
     if(cancha&&horario){
       const table=document.createElement('table'),caption=document.createElement('caption');
       caption.textContent=`Día operativo ${$('dia').value} · 07:00 a 01:00 (+1 día) · America/Lima`;table.append(caption);
-      const head=document.createElement('tr');for(const label of ['Hora','Disponibilidad']){const th=document.createElement('th');th.textContent=label;head.append(th);}table.append(head);
+      const head=document.createElement('tr');for(const label of ['Hora','Estado']){const th=document.createElement('th');th.textContent=label;head.append(th);}table.append(head);
       const usados=ocupacion.get(id)??new Set();
       const disponibles=new Set(iniciosDeTurno(libresCancha(id,$('dia').value),60,horario.aperturaMinuto,60));
       for(let m=horario.aperturaMinuto;m<(horario.cierreMinuto>horario.aperturaMinuto?horario.cierreMinuto:1440+horario.cierreMinuto);m+=60){
