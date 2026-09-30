@@ -130,6 +130,16 @@ class AgendaProvider extends Operacion {
 
   Future<bool> registrar(Map<String, dynamic> datos) =>
       conResultado(() => gestionar.registrar(datos));
+  Future<bool> registrarEfectivo(Reserva r, int monto, int cobro, String id) =>
+      conResultado(
+        () => repository.registrarEfectivo(
+          id: r.id,
+          version: r.entero('version'),
+          monto: monto,
+          cobro: cobro,
+          operacionId: id,
+        ),
+      );
   Future<bool> actualizar(Reserva r, String estado) => conResultado(
     () => repository.actualizar({
       'id': r.id,

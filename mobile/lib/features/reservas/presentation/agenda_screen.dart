@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart' show Timestamp;
 import '../../../core/domain/formatos.dart';
 import '../../../core/domain/negocio.dart';
 import '../../../core/presentation/componentes.dart';
@@ -10,6 +11,15 @@ import '../domain/reserva.dart';
 import 'agenda_provider.dart';
 import 'reserva_dialog.dart';
 import '../../presencia/domain/presencia_control.dart';
+
+String _fechaRegistro(Object? valor) {
+  final instante = valor is Timestamp
+      ? valor.toDate()
+      : valor is DateTime
+      ? valor
+      : null;
+  return instante == null ? 'Pendiente' : '${fechaHoraLima(instante)} (Lima)';
+}
 
 class AgendaScreen extends StatelessWidget {
   final AgendaProvider provider;
@@ -219,6 +229,7 @@ class AgendaScreen extends StatelessWidget {
           if (provider.cargando) const LinearProgressIndicator(),
           Expanded(
             child: _TablasAgenda(
+              provider: provider,
               horario: sedesProvider.horario,
               dia: provider.dia,
               reservas: todas,
@@ -233,12 +244,14 @@ class AgendaScreen extends StatelessWidget {
 }
 
 class _TablasAgenda extends StatelessWidget {
+  final AgendaProvider provider;
   final Stream<HorarioNegocio?> horario;
   final String dia;
   final List<Reserva> reservas;
   final Map<String, Set<int>> ocupacion;
   final void Function(Reserva) onDetalle;
   const _TablasAgenda({
+    required this.provider,
     required this.horario,
     required this.dia,
     required this.reservas,
@@ -256,7 +269,6 @@ class _TablasAgenda extends StatelessWidget {
           child: Text('El horario de atencion no esta configurado.'),
         );
       }
-      final limite = h.cruzaMedianoche ? h.cierre + 1440 : h.cierre;
       return LayoutBuilder(
         builder: (context, constraints) {
           final ancho = constraints.maxWidth >= 700
@@ -293,12 +305,22 @@ class _TablasAgenda extends StatelessWidget {
                                       context,
                                     ).textTheme.titleLarge,
                                   ),
-                                  for (
-                                    var minuto = h.apertura;
-                                    minuto < limite;
-                                    minuto += 60
-                                  )
-                                    _fila(cancha, minuto),
+                                  const Text('Planilla diaria de 18 horas'),
+                                  FilledButton.icon(
+                                    icon: const Icon(
+                                      Icons.table_chart_outlined,
+                                    ),
+                                    label: Text('Abrir ${sedes[cancha]}'),
+                                    onPressed: () => showDialog<void>(
+                                      context: context,
+                                      builder: (_) => _HojaCancha(
+                                        provider: provider,
+                                        cancha: cancha,
+                                        horario: h,
+                                        onDetalle: onDetalle,
+                                      ),
+                                    ),
+                                  ),
                                   for (final r in reservas.where(
                                     (r) =>
                                         r.texto('canchaId') == cancha &&
@@ -325,67 +347,250 @@ class _TablasAgenda extends StatelessWidget {
       );
     },
   );
+}
 
-  Widget _fila(String cancha, int minuto) {
-    final candidatas = reservas.where(
-      (r) =>
-          r.texto('canchaId') == cancha &&
-          r.ocupa &&
-          minuto + 60 > r.entero('minuto') &&
-          minuto < r.entero('minuto') + r.entero('duracion'),
-    );
-    final lista = candidatas.toList();
-    final ocupado = [
-      minuto,
-      minuto + 30,
-    ].any((m) => ocupacion[cancha]?.contains(m) == true);
-    return InkWell(
-      onTap: null,
-      child: Container(
-        constraints: const BoxConstraints(minHeight: 48),
-        padding: const EdgeInsets.symmetric(vertical: 6),
-        decoration: const BoxDecoration(
-          border: Border(bottom: BorderSide(color: Colors.black12)),
-        ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SizedBox(
-              width: 80,
-              child: Text('${hora(minuto)}\n${hora(minuto + 60)}'),
-            ),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (lista.isEmpty)
-                    _EstadoReserva(estado: ocupado ? 'Ocupado' : 'Libre'),
-                  for (final r in lista)
-                    InkWell(
-                      onTap: () => onDetalle(r),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(r.texto('clienteNombre')),
-                          Text(r.texto('telefono')),
-                          Text(
-                            '${hora(r.entero('minuto'))} – ${hora(r.entero('minuto') + r.entero('duracion'))}',
-                          ),
-                          _EstadoReserva(estado: r.estado),
-                          Text(
-                            r.texto('atendidoPor').isEmpty
-                                ? 'Por atender'
-                                : 'Atiende: ${r.texto('atendidoPor')}',
-                          ),
-                        ],
+class _HojaCancha extends StatelessWidget {
+  final AgendaProvider provider;
+  final String cancha;
+  final HorarioNegocio horario;
+  final void Function(Reserva) onDetalle;
+  const _HojaCancha({
+    required this.provider,
+    required this.cancha,
+    required this.horario,
+    required this.onDetalle,
+  });
+
+  @override
+  Widget build(BuildContext context) => Dialog(
+    insetPadding: const EdgeInsets.all(16),
+    child: SizedBox(
+      width: 1400,
+      height: MediaQuery.sizeOf(context).height - 64,
+      child: AnimatedBuilder(
+        animation: provider,
+        builder: (context, _) {
+          final todas = provider.todasFilas
+              .where((r) => r.texto('canchaId') == cancha)
+              .toList();
+          final reservas = todas.where((r) => r.ocupa).toList();
+          final limite = horario.cruzaMedianoche
+              ? horario.cierre + 1440
+              : horario.cierre;
+          final conMonto = reservas
+              .where((r) => !r.bloqueo && r.monto > 0)
+              .toList();
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(12),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        '${sedes[cancha]} · ${provider.dia} · America/Lima',
+                        style: Theme.of(context).textTheme.titleLarge,
                       ),
                     ),
-                ],
+                    IconButton(
+                      tooltip: 'Cerrar planilla',
+                      onPressed: () => Navigator.pop(context),
+                      icon: const Icon(Icons.close),
+                    ),
+                  ],
+                ),
               ),
-            ),
-          ],
-        ),
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 12),
+                child: Text(
+                  '07:00 a 01:00 del día siguiente · Registro interno; pagos no verificados. Toca una reserva para ver su detalle.',
+                ),
+              ),
+              Expanded(
+                child: SingleChildScrollView(
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: DataTable(
+                      columnSpacing: 20,
+                      horizontalMargin: 12,
+                      dataRowMinHeight: 40,
+                      dataRowMaxHeight: 40,
+                      columns: [
+                        for (final titulo in [
+                          'Hora',
+                          'Nombre / estado',
+                          'Monto a pagar',
+                          'Teléfono',
+                          'Adelanto',
+                          'Resta',
+                          'Total registrado',
+                          'Quién atiende',
+                        ])
+                          DataColumn(label: Text(titulo)),
+                      ],
+                      rows: [
+                        for (
+                          var minuto = horario.apertura;
+                          minuto < limite;
+                          minuto += 60
+                        )
+                          _fila(context, minuto, reservas),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              if (todas.any((r) => !r.ocupa))
+                TextButton(
+                  onPressed: () => showDialog<void>(
+                    context: context,
+                    builder: (_) => AlertDialog(
+                      title: const Text('Solicitudes y reservas sin ocupación'),
+                      content: SizedBox(
+                        width: 600,
+                        child: SingleChildScrollView(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              for (final r in todas.where((r) => !r.ocupa))
+                                ListTile(
+                                  title: Text(
+                                    '${r.texto('clienteNombre')} · ${r.estado}',
+                                  ),
+                                  subtitle: Text(
+                                    'Efectivo registrado: ${soles(r.adelanto)}',
+                                  ),
+                                  onTap: () => onDetalle(r),
+                                ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(context),
+                          child: const Text('Cerrar'),
+                        ),
+                      ],
+                    ),
+                  ),
+                  child: const Text('Ver canceladas y solicitudes'),
+                ),
+              Padding(
+                padding: const EdgeInsets.all(12),
+                child: Text(
+                  'Totales del día (cada reserva se cuenta una vez): monto ${soles(conMonto.fold<int>(0, (n, r) => n + r.monto))} · efectivo registrado ${soles(todas.fold<int>(0, (n, r) => n + r.adelanto))} · resta ${soles(conMonto.fold<int>(0, (n, r) => n + r.saldo))}'
+                  '${reservas.any((r) => !r.bloqueo && r.monto == 0) ? ' · Hay tarifas pendientes.' : ''}',
+                ),
+              ),
+            ],
+          );
+        },
       ),
+    ),
+  );
+
+  DataRow _fila(BuildContext context, int minuto, List<Reserva> reservas) {
+    final lista = reservas
+        .where(
+          (r) =>
+              minuto + 60 > r.entero('minuto') &&
+              minuto < r.entero('minuto') + r.entero('duracion'),
+        )
+        .toList();
+    final ocupada = [
+      minuto,
+      minuto + 30,
+    ].any((m) => provider.ocupacionPorCancha[cancha]?.contains(m) == true);
+    final iniciales = lista
+        .where(
+          (r) =>
+              r.entero('minuto') >= minuto && r.entero('minuto') < minuto + 60,
+        )
+        .toList();
+    String importes(String campo) => iniciales
+        .map((r) {
+          if (r.bloqueo) return '—';
+          if (campo == 'monto' || campo == 'saldo') {
+            return r.monto > 0
+                ? soles(campo == 'monto' ? r.monto : r.saldo)
+                : 'Pendiente';
+          }
+          final importe = campo == 'adelanto' ? r.adelantoInicial : r.adelanto;
+          return importe > 0 ? soles(importe) : 'Sin registro';
+        })
+        .join('\n');
+    DataCell celda(String texto) => DataCell(
+      Text(texto, maxLines: 2, overflow: TextOverflow.ellipsis),
+      onTap: lista.isEmpty
+          ? null
+          : () {
+              if (lista.length == 1) {
+                onDetalle(lista.first);
+                return;
+              }
+              showDialog<void>(
+                context: context,
+                builder: (dialogContext) => AlertDialog(
+                  title: const Text('Elegir reserva de esta hora'),
+                  content: SizedBox(
+                    width: 600,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        for (final r in lista)
+                          ListTile(
+                            title: Text(r.texto('clienteNombre')),
+                            subtitle: Text(
+                              '${hora(r.entero('minuto'))} – ${hora(r.entero('minuto') + r.entero('duracion'))}',
+                            ),
+                            onTap: () {
+                              Navigator.pop(dialogContext);
+                              onDetalle(r);
+                            },
+                          ),
+                      ],
+                    ),
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(dialogContext),
+                      child: const Text('Cerrar'),
+                    ),
+                  ],
+                ),
+              );
+            },
+    );
+    return DataRow(
+      cells: [
+        celda('${hora(minuto)} – ${hora(minuto + 60)}'),
+        celda(
+          lista.isEmpty
+              ? (ocupada ? 'Ocupado' : 'Libre')
+              : lista
+                    .map(
+                      (r) =>
+                          '${r.texto('clienteNombre')} · ${r.estado}\n${hora(r.entero('minuto'))} – ${hora(r.entero('minuto') + r.entero('duracion'))}',
+                    )
+                    .join('\n'),
+        ),
+        celda(importes('monto')),
+        celda(lista.map((r) => r.texto('telefono')).join('\n')),
+        celda(importes('adelanto')),
+        celda(importes('saldo')),
+        celda(importes('total')),
+        celda(
+          lista
+              .map(
+                (r) => r.texto('atendidoPor').isEmpty
+                    ? 'Por atender'
+                    : r.texto('atendidoPor'),
+              )
+              .join('\n'),
+        ),
+      ],
     );
   }
 }
@@ -454,30 +659,6 @@ class _AvisoPreparacion extends StatelessWidget {
   );
 }
 
-class _EstadoReserva extends StatelessWidget {
-  final String estado;
-  const _EstadoReserva({required this.estado});
-
-  @override
-  Widget build(BuildContext context) {
-    final confirmada = estado == 'confirmada';
-    final color = confirmada
-        ? Colors.green
-        : Theme.of(context).colorScheme.secondary;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: .12),
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Text(
-        estado,
-        style: TextStyle(color: color, fontWeight: FontWeight.w700),
-      ),
-    );
-  }
-}
-
 class DetalleReserva extends StatefulWidget {
   final AgendaProvider provider;
   final Reserva reserva;
@@ -525,8 +706,34 @@ class _DetalleReservaState extends State<DetalleReserva> {
       titulo: r.texto('clienteNombre'),
       children: [
         Text(
-          '${r.texto('dia')} ${hora(r.entero('minuto'))} · ${r.entero('duracion')} minutos\n${r.texto('telefono')}\nOrigen: ${r.texto('origen')}\nEstado actual: ${r.estado}\nResponsable: ${r.texto('atendidoPor').isEmpty ? 'Por atender' : r.texto('atendidoPor')}\nCreada: ${r.datos['createdAt']}\nActualizada: ${r.datos['updatedAt']}',
+          '${r.texto('dia')} ${hora(r.entero('minuto'))} · ${r.entero('duracion')} minutos\n${r.texto('telefono')}\nOrigen: ${r.texto('origen')}\nEstado actual: ${r.estado}\nResponsable: ${r.texto('atendidoPor').isEmpty ? 'Por atender' : r.texto('atendidoPor')}\nCreada: ${_fechaRegistro(r.datos['createdAt'])}\nActualizada: ${_fechaRegistro(r.datos['updatedAt'])}',
         ),
+        Text(
+          'Monto: ${r.monto > 0 ? soles(r.monto) : 'Pendiente'} · Efectivo registrado: ${soles(r.adelanto)} · Resta: ${r.monto > 0 ? soles(r.saldo) : 'Pendiente'}',
+        ),
+        const Text(
+          'Registro manual del personal. Sin verificación de Culqi ni otro proveedor.',
+        ),
+        for (final e in (r.datos['historialPagos'] as List? ?? const []))
+          Text(
+            '${_fechaRegistro(e['fecha'])} · ${soles(e['importeCentimos'] as int)} · empleado ${e['registradoPor']}',
+          ),
+        if (widget.puedeEscribir && r.estado == 'confirmada' && !r.bloqueo)
+          OutlinedButton(
+            onPressed: () async {
+              final guardado = await showDialog<bool>(
+                context: context,
+                builder: (_) =>
+                    _EfectivoDialog(provider: widget.provider, reserva: r),
+              );
+              if (guardado == true && context.mounted) Navigator.pop(context);
+            },
+            child: const Text('Registrar monto / efectivo'),
+          ),
+        if (r.adelanto > 0)
+          const Text(
+            'Cancelar libera el horario y conserva los cobros registrados. No registra una devolución de efectivo.',
+          ),
         if (r.estado == 'pendiente' && !asignado)
           const Text(
             'La solicitud debe resolverla el empleado asignado a esta cancha.',
@@ -575,3 +782,102 @@ Future<Registro?> seleccionarCliente(
     ),
   ),
 );
+
+class _EfectivoDialog extends StatefulWidget {
+  final AgendaProvider provider;
+  final Reserva reserva;
+  const _EfectivoDialog({required this.provider, required this.reserva});
+  @override
+  State<_EfectivoDialog> createState() => _EfectivoDialogState();
+}
+
+class _EfectivoDialogState extends State<_EfectivoDialog> {
+  late final monto = TextEditingController(
+    text: widget.reserva.monto > 0
+        ? (widget.reserva.monto / 100).toStringAsFixed(2)
+        : '',
+  );
+  final cobro = TextEditingController(text: '0.00');
+  final id = nuevaOperacion();
+  bool enviado = false;
+  @override
+  void dispose() {
+    monto.dispose();
+    cobro.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => FormDialog(
+    titulo: 'Registro manual de efectivo',
+    children: [
+      Text(
+        'Ya registrado: ${soles(widget.reserva.adelanto)}. No se modifica la disponibilidad.',
+      ),
+      IgnorePointer(
+        ignoring: enviado,
+        child: Column(
+          children: [
+            Campo(
+              'Monto acordado de la reserva (S/)',
+              monto,
+              tipo: const TextInputType.numberWithOptions(decimal: true),
+            ),
+            Campo(
+              'Efectivo recibido ahora (S/)',
+              cobro,
+              tipo: const TextInputType.numberWithOptions(decimal: true),
+            ),
+          ],
+        ),
+      ),
+      const Text(
+        'Registra solo dinero recibido físicamente. 0.00 permite fijar el monto sin registrar un pago.',
+      ),
+      BotonGuardar(
+        operacion: widget.provider,
+        texto: enviado
+            ? 'Reintentar mismo registro'
+            : 'Guardar registro de efectivo',
+        onPressed: () async {
+          try {
+            final importe = centimos(monto.text),
+                recibido = centimos(cobro.text);
+            if (importe <= 0 || importe > 100000000) {
+              throw const FormatException(
+                'Indica un monto acordado mayor que cero.',
+              );
+            }
+            if (recibido > importe - widget.reserva.adelanto) {
+              throw const FormatException(
+                'El cobro supera el saldo pendiente. Corrige el importe.',
+              );
+            }
+            if (widget.reserva.adelanto > 0 &&
+                importe != widget.reserva.monto) {
+              throw const FormatException(
+                'Con cobros registrados no se cambia el monto acordado.',
+              );
+            }
+            if (recibido == 0 && importe == widget.reserva.monto) {
+              throw const FormatException('No hay cambios que registrar.');
+            }
+            setState(() => enviado = true);
+            if (await widget.provider.registrarEfectivo(
+                  widget.reserva,
+                  importe,
+                  recibido,
+                  id,
+                ) &&
+                context.mounted) {
+              Navigator.pop(context, true);
+            }
+          } on FormatException catch (e) {
+            widget.provider.error = e.message;
+            widget.provider.notificar();
+          }
+        },
+      ),
+    ],
+  );
+}

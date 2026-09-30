@@ -6,6 +6,16 @@ class Reserva extends Registro {
   int get monto => entero('montoCentimos');
   int get adelanto => entero('adelantoCentimos');
   int get saldo => monto - adelanto;
+  int get adelantoInicial {
+    final movimientos = (datos['historialPagos'] as List? ?? const []).where(
+      (e) =>
+          e is Map && e['importeCentimos'] is int && e['importeCentimos'] > 0,
+    );
+    if (movimientos.isEmpty) return adelanto;
+    final primero = movimientos.first['importeCentimos'] as int;
+    return primero < monto ? primero : 0;
+  }
+
   String get estado => texto('estado');
   bool get ocupa => ['confirmada', 'no_asistio'].contains(estado);
   int minutoEnDia(String dia) => entero('minuto');

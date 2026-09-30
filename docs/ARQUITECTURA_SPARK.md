@@ -10,7 +10,7 @@ La ocupacion conserva 36 unidades para no perder reservas parciales existentes, 
 1440 y 1470 de la madrugada siguiente. El selector de hoy conserva el dia operativo
 anterior antes de las 07:00. Direccion y tarifa pueden quedar pendientes; solo la
 habilitacion de la cancha determina su reservabilidad, sin relajar privacidad ni
-solapamientos. Los pagos siguen en cero y no se verifican. Una solicitud mayor
+solapamientos. Las reservas nacen sin importes. El personal autorizado puede fijar el monto acordado y registrar efectivo manual, con historial inmutable, versionado y saldo; no hay verificacion de Culqi ni WhatsApp. El campo adelantoCentimos conserva el acumulado registrado; la planilla distingue el primer adelanto del total usando el historial. Una solicitud mayor
 de 180 minutos ocupa solo al aprobarla un empleado activo asignado a la cancha,
 revalidando disponibilidad. El gerente conserva creacion y cancelacion, pero no
 aprueba solicitudes largas sin una ficha de empleado asignado.

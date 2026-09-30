@@ -178,8 +178,10 @@ void main() {
       expect(find.text('Tabla La 19'), findsOneWidget);
       expect(find.text('Tabla La 23'), findsOneWidget);
       expect(find.text('Tabla La 24'), findsOneWidget);
-      expect(find.text('Libre'), findsNWidgets(54));
-      expect(find.text('00:00 (+1 dia)\n01:00 (+1 dia)'), findsNWidgets(3));
+      expect(find.text('Abrir La 19'), findsOneWidget);
+      expect(find.text('Abrir La 23'), findsOneWidget);
+      expect(find.text('Abrir La 24'), findsOneWidget);
+      expect(find.text('Planilla diaria de 18 horas'), findsNWidgets(3));
       expect(tester.takeException(), isNull);
       await tester.tap(find.text('Reserva'));
       await tester.pumpAndSettle();
@@ -336,15 +338,42 @@ void main() {
               'montoCentimos': 5000,
               'adelantoCentimos': 1000,
             }),
+            Reserva('r2', {
+              'dia': '2026-09-26',
+              'minutos': ['600'],
+              'minuto': 600,
+              'duracion': 30,
+              'sedeId': 'la-19',
+              'canchaId': 'la-19',
+              'clienteNombre': 'Segundo cliente local',
+              'telefono': '+51999888666',
+              'estado': 'confirmada',
+              'montoCentimos': 0,
+              'adelantoCentimos': 0,
+            }),
           ],
           desdeCache: false,
           pendientes: false,
         ),
       );
       await tester.pumpAndSettle();
+      await tester.tap(find.text('Abrir La 19'));
+      await tester.pumpAndSettle();
       expect(find.textContaining('Cliente de prueba'), findsWidgets);
-      expect(find.text('10:30 – 11:00'), findsOneWidget);
-      expect(find.text('10:00\n11:00'), findsNWidgets(3));
+      expect(find.textContaining('10:30 – 11:00'), findsOneWidget);
+      expect(find.text('Monto a pagar'), findsOneWidget);
+      expect(find.text('Adelanto'), findsOneWidget);
+      expect(find.text('10:00 – 11:00'), findsOneWidget);
+      await tester.tap(find.text('10:00 – 11:00'));
+      await tester.pumpAndSettle();
+      expect(find.text('Elegir reserva de esta hora'), findsOneWidget);
+      expect(find.text('Cliente de prueba'), findsOneWidget);
+      expect(find.text('Segundo cliente local'), findsOneWidget);
+      await tester.tap(find.text('Cerrar'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('Cerrar planilla'));
+      await tester.pumpAndSettle();
       expect(find.text('Reserva'), findsNothing);
       expect(tester.takeException(), isNull);
       datos.addError(
@@ -358,6 +387,48 @@ void main() {
       cp.dispose();
     },
   );
+  testWidgets('efectivo: se puede corregir un cobro excesivo antes de enviar', (
+    tester,
+  ) async {
+    when(() => repo.puedeAprobar(any())).thenAnswer((_) async => false);
+    final reserva = Reserva('r-efectivo', {
+      'clienteNombre': 'Prueba local',
+      'canchaId': 'la-19',
+      'estado': 'confirmada',
+      'version': 1,
+      'montoCentimos': 0,
+      'adelantoCentimos': 0,
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: DetalleReserva(
+            provider: provider,
+            reserva: reserva,
+            puedeEscribir: true,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Registrar monto / efectivo'));
+    await tester.tap(find.text('Registrar monto / efectivo'));
+    await tester.pumpAndSettle();
+    final campos = find.byType(TextField);
+    await tester.enterText(campos.at(0), '100');
+    await tester.enterText(campos.at(1), '101');
+    await tester.ensureVisible(find.text('Guardar registro de efectivo'));
+    await tester.tap(find.text('Guardar registro de efectivo'));
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining('El cobro supera el saldo pendiente.'),
+      findsWidgets,
+    );
+    await tester.enterText(campos.at(1), '30.50');
+    expect(tester.widget<TextField>(campos.at(1)).controller!.text, '30.50');
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
   testWidgets('muestra conexion y aviso ambar de preparacion', (tester) async {
     final sr = SedesRepo(), cr = ClientesRepo();
     stubSedes(sr, canchas: const [canchaReservable, canchaIncompleta]);

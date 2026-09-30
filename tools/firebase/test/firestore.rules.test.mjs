@@ -9,6 +9,8 @@ import {
 } from '@firebase/rules-unit-testing';
 import {
   Timestamp,
+  serverTimestamp,
+  runTransaction,
   collection,
   deleteField,
   deleteDoc,
@@ -1847,6 +1849,68 @@ test('el espejo publico exige una reserva y una agenda privada que lo respalden'
   assert.deepEqual((await getDoc(espejoReal)).data(), { ocupados: ocupado });
 
   assert.deepEqual(huecos, []);
+});
+
+
+function efectivoPatch(a, cobro, monto = 10000, uid = EMPLOYEE, id = 'efectivo-operacion-0001') {
+  return {montoCentimos:monto, adelantoCentimos:a.adelantoCentimos+cobro,
+    saldoCentimos:monto-a.adelantoCentimos-cobro, metodoPago:'efectivo_manual', version:a.version+1,
+    updatedAt:serverTimestamp(), historialPagos:[...a.historialPagos,{id, registradoPor:uid,
+      importeCentimos:cobro,montoCentimos:monto,fecha:Timestamp.now(),metodo:'efectivo_manual'}]};
+}
+
+test('efectivo manual: adelanto, saldo y pago completo preservan privacidad y ocupacion', async () => {
+  await seedApplication(); const db=verified(EMPLOYEE).firestore();
+  const b=makeBooking(db,{id:'efectivo-simple',uid:EMPLOYEE}); await assertSucceeds(bookingBatch(db,b).commit());
+  const before=(await getDoc(agendaRef(db,b))).data();
+  await assertSucceeds(updateDoc(b.ref, efectivoPatch(b.body,0,10000,EMPLOYEE,'efectivo-fijar-monto-001')));
+  const sinPago=(await getDoc(b.ref)).data();assert.equal(sinPago.adelantoCentimos,0);
+  await assertSucceeds(updateDoc(b.ref, efectivoPatch(sinPago,3000)));
+  const a=(await getDoc(b.ref)).data(); assert.equal(a.saldoCentimos,7000);
+  await assertSucceeds(updateDoc(b.ref,efectivoPatch(a,7000,10000,EMPLOYEE,'efectivo-operacion-0002')));
+  const r=(await getDoc(b.ref)).data();assert.equal(r.saldoCentimos,0);assert.equal(r.historialPagos.length,3);
+  assert.deepEqual((await getDoc(agendaRef(db,b))).data(),before);
+  await assertFails(getDoc(doc(anonymous(ANON_A).firestore(),'negocios',BUSINESS,'reservas',b.id)));
+  await assertSucceeds(cancellationBatch(db,{...b,body:r},EMPLOYEE).commit());
+  const cancelada=(await getDoc(b.ref)).data();assert.equal(cancelada.adelantoCentimos,10000);assert.deepEqual(cancelada.historialPagos,r.historialPagos);
+  assert.deepEqual((await getDoc(publicSlotRef(db,b))).data().ocupados,{});
+  await assertFails(updateDoc(b.ref,efectivoPatch(cancelada,1,10001,EMPLOYEE,'efectivo-cancelada-0001')));
+});
+
+test('efectivo rechaza exceso, historial alterado, suplantacion, permisos y cambios de agenda', async () => {
+  await seedApplication(); const db=verified(EMPLOYEE).firestore(); const b=makeBooking(db,{id:'efectivo-seguro',uid:EMPLOYEE}); await bookingBatch(db,b).commit();
+  await assertFails(updateDoc(b.ref,efectivoPatch(b.body,10001)));
+  await assertFails(updateDoc(b.ref,{...efectivoPatch(b.body,1000), estado:'cancelada'}));
+  await assertFails(updateDoc(b.ref,efectivoPatch(b.body,1000,10000,ADMIN)));
+  for(const actor of [anonymous(ANON_A),verified(DEACTIVATED),verified(NO_RESERVATIONS),verified(UNLINKED)])
+    await assertFails(updateDoc(doc(actor.firestore(),'negocios',BUSINESS,'reservas',b.id),efectivoPatch(b.body,1000)));
+  await updateDoc(b.ref,efectivoPatch(b.body,3000));const a=(await getDoc(b.ref)).data();
+  await assertFails(updateDoc(b.ref,efectivoPatch(a,1000,20000)));
+  const forged=efectivoPatch(a,1000,10000,EMPLOYEE,'efectivo-operacion-0002');forged.historialPagos[0]={...forged.historialPagos[0],importeCentimos:9999};
+  await assertFails(updateDoc(b.ref,forged));
+  await assertFails(updateDoc(b.ref,{...efectivoPatch(a,1000),saldoCentimos:0}));
+});
+
+test('efectivo: dos sesiones y reintento de la misma operacion no duplican cobro', async () => {
+  await seedApplication();const db=verified(EMPLOYEE).firestore();const b=makeBooking(db,{id:'efectivo-concurrente',uid:EMPLOYEE});await bookingBatch(db,b).commit();
+  const registrar=(id) => runTransaction(db,async tx=>{const a=(await tx.get(b.ref)).data();
+    if(a.historialPagos.some(e=>e.id===id))return;
+    if(a.version!==1)throw new Error('Version obsoleta');tx.update(b.ref,efectivoPatch(a,3000,10000,EMPLOYEE,id));});
+  const results=await Promise.allSettled([registrar('efectivo-operacion-0001'),registrar('efectivo-operacion-0002')]);
+  assert.equal(results.filter(r=>r.status==='fulfilled').length,1);
+  const a=(await getDoc(b.ref)).data();await registrar(a.historialPagos[0].id);
+  const r=(await getDoc(b.ref)).data();assert.equal(r.adelantoCentimos,3000);assert.equal(r.historialPagos.length,1);
+});
+
+test('efectivo: 100 movimientos conservan historial sin agotar expresiones', async () => {
+  await seedApplication();const db=verified(EMPLOYEE).firestore();const b=makeBooking(db,{id:'efectivo-historial-maximo',uid:EMPLOYEE});
+  await seedBooking(b);
+  await environment.withSecurityRulesDisabled(async ctx=>{
+    await updateDoc(doc(ctx.firestore(),'negocios',BUSINESS,'reservas',b.id),{adelantoCentimos:99,saldoCentimos:9901,montoCentimos:10000,metodoPago:'efectivo_manual',
+      historialPagos:Array.from({length:99},(_,i)=>({id:'efectivo-historico-'+i,registradoPor:EMPLOYEE,importeCentimos:1,montoCentimos:10000,fecha:Timestamp.now(),metodo:'efectivo_manual'}))});
+  });
+  const a=(await getDoc(b.ref)).data();await assertSucceeds(updateDoc(b.ref,efectivoPatch(a,1)));
+  const r=(await getDoc(b.ref)).data();await assertFails(updateDoc(b.ref,efectivoPatch(r,1,10000,EMPLOYEE,'efectivo-operacion-0101')));
 });
 
 let failures = 0;

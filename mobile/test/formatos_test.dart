@@ -3,6 +3,13 @@ import 'package:mobile/core/domain/formatos.dart';
 import 'package:mobile/features/reservas/domain/reserva.dart';
 
 void main() {
+  test('fecha de registro en Lima cruza medianoche correctamente', () {
+    expect(
+      fechaHoraLima(DateTime.parse('2026-09-30T05:30:00Z')),
+      '2026-09-30 00:30',
+    );
+  });
+
   test('céntimos sin error de coma flotante', () {
     expect(centimos('0.29'), 29);
     expect(centimos('19,95'), 1995);

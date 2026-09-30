@@ -58,6 +58,75 @@ class ReservasRepository {
       .map((doc) => doc.exists ? leerHorario(convertir(doc)) : null);
 
   /// Registra una reserva o bloqueo y todas sus franjas canonicas de 30 minutos.
+  Future<Resultado<void>> registrarEfectivo({
+    required String id,
+    required int version,
+    required int monto,
+    required int cobro,
+    required String operacionId,
+  }) => servicios.guardando(() async {
+    if (monto <= 0 || monto > 100000000 || cobro < 0) {
+      throw const FormatException(
+        'Indica un monto positivo y un cobro válido.',
+      );
+    }
+    final ref = servicios.doc(negocio, 'reservas', id);
+    await servicios.db.runTransaction((tx) async {
+      final snap = await tx.get(ref);
+      final r = snap.data();
+      if (r == null || r['estado'] != 'confirmada' || r['bloqueo'] == true) {
+        throw const FormatException(
+          'Solo se registra efectivo en reservas confirmadas.',
+        );
+      }
+      final historial = List<Map<String, dynamic>>.from(
+        (r['historialPagos'] as List).map(
+          (e) => Map<String, dynamic>.from(e as Map),
+        ),
+      );
+      if (historial.any((e) => e['id'] == operacionId)) return;
+      if (r['version'] != version) {
+        throw const FormatException(
+          'La reserva cambió. Cierra y vuelve a abrirla.',
+        );
+      }
+      final anterior = r['adelantoCentimos'] as int;
+      if (anterior > 0 && monto != r['montoCentimos']) {
+        throw const FormatException(
+          'Con cobros registrados no se cambia el monto acordado.',
+        );
+      }
+      if (anterior + cobro > monto) {
+        throw const FormatException('El cobro supera el saldo pendiente.');
+      }
+      if (cobro == 0 && monto == r['montoCentimos']) {
+        throw const FormatException('No hay cambios que registrar.');
+      }
+      if (historial.length >= 100) {
+        throw const FormatException(
+          'Se alcanzó el máximo de movimientos de esta reserva.',
+        );
+      }
+      historial.add({
+        'id': operacionId,
+        'registradoPor': servicios.uid,
+        'importeCentimos': cobro,
+        'montoCentimos': monto,
+        'fecha': Timestamp.now(),
+        'metodo': 'efectivo_manual',
+      });
+      tx.update(ref, {
+        'montoCentimos': monto,
+        'adelantoCentimos': anterior + cobro,
+        'saldoCentimos': monto - anterior - cobro,
+        'metodoPago': 'efectivo_manual',
+        'historialPagos': historial,
+        'updatedAt': FieldValue.serverTimestamp(),
+        'version': version + 1,
+      });
+    });
+  });
+
   Future<Resultado<void>> registrar(
     Map<String, dynamic> datos,
   ) => servicios.guardando(() async {

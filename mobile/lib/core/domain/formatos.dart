@@ -13,6 +13,9 @@ DateTime ahoraLima([DateTime? instante]) =>
     (instante ?? DateTime.now()).toUtc().subtract(const Duration(hours: 5));
 String fechaLima([DateTime? instante]) =>
     ahoraLima(instante).toIso8601String().substring(0, 10);
+String fechaHoraLima(DateTime instante) => ahoraLima(
+  instante,
+).toIso8601String().substring(0, 16).replaceFirst('T', ' ');
 String diaOperativoLima([DateTime? instante]) {
   final local = ahoraLima(instante);
   final operativo = local.hour < 7

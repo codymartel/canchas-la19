@@ -394,6 +394,36 @@ service cloud.firestore {
         && camposReservaValidos(n, r, coleccion);
     }
 
+    function efectivoValido(n) {
+      let a = resource.data;
+      let r = request.resource.data;
+      return a.schemaVersion == 5 && a.bloqueo == false && a.estado == 'confirmada'
+        && puedeResolverCancha(n, a.canchaId)
+        && r.diff(a).affectedKeys().hasOnly(['montoCentimos', 'adelantoCentimos', 'saldoCentimos', 'metodoPago', 'historialPagos', 'version', 'updatedAt'])
+        && r.version == a.version + 1 && r.updatedAt == request.time
+        && r.montoCentimos is int && r.montoCentimos > 0 && r.montoCentimos <= 100000000
+        && (a.adelantoCentimos == 0 || r.montoCentimos == a.montoCentimos)
+        && r.adelantoCentimos is int && r.adelantoCentimos >= a.adelantoCentimos
+        && r.adelantoCentimos <= r.montoCentimos
+        && r.saldoCentimos == r.montoCentimos - r.adelantoCentimos
+        && r.metodoPago == 'efectivo_manual'
+        && r.historialPagos is list && a.historialPagos.size() < 100
+        && r.historialPagos.size() == a.historialPagos.size() + 1
+        && eventoEfectivoValido(a, r);
+    }
+
+    function eventoEfectivoValido(a, r) {
+      let e = r.historialPagos[a.historialPagos.size()];
+      return e is map && e.keys().hasOnly(['id','registradoPor','importeCentimos','montoCentimos','fecha','metodo']) && e.size() == 6
+        && e.id is string && e.id.size() >= 16 && e.id.size() <= 96
+        && e.registradoPor == request.auth.uid && e.metodo == 'efectivo_manual'
+        && e.importeCentimos is int && e.importeCentimos == r.adelantoCentimos - a.adelantoCentimos
+        && e.montoCentimos == r.montoCentimos
+        && (e.importeCentimos > 0 || r.montoCentimos != a.montoCentimos)
+        && e.fecha is timestamp && e.fecha >= request.time - duration.value(5, 'm') && e.fecha <= request.time + duration.value(1, 'm')
+        && r.historialPagos == a.historialPagos.concat([e]);
+    }
+
     function transicionValida(n, id, coleccion) {
       let antes = resource.data;
       let ahora = request.resource.data;
@@ -671,7 +701,7 @@ service cloud.firestore {
               || resource.data.solicitanteUid == request.auth.uid));
         allow list: if puede(n, 'agenda') && limite(1500);
         allow create: if reservaValida(n, id, 'reservas');
-        allow update: if transicionValida(n, id, 'reservas');
+        allow update: if transicionValida(n, id, 'reservas') || efectivoValido(n);
         allow delete: if false;
       }
 
