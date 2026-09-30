@@ -22,9 +22,9 @@ class SedesRepo extends Mock implements SedesRepository {}
 
 /// Horario global de ejemplo; las canchas ya no llevan horario propio.
 const horarioGlobal = HorarioNegocio(
-  apertura: 360,
-  cierre: 1440,
-  duracionTurno: 60,
+  apertura: 420,
+  cierre: 60,
+  duracionTurno: 30,
 );
 
 const canchaReservable = Registro('la-19', {
@@ -172,6 +172,11 @@ void main() {
         find.text('Sin reservas ni bloqueos para este día.'),
         findsOneWidget,
       );
+      expect(find.text('Tabla La 19'), findsOneWidget);
+      expect(find.text('Tabla La 23'), findsOneWidget);
+      expect(find.text('Tabla La 24'), findsOneWidget);
+      expect(find.text('Libre'), findsNWidgets(108));
+      expect(find.text('00:30 (+1 dia)\n01:00 (+1 dia)'), findsNWidgets(3));
       expect(tester.takeException(), isNull);
       await tester.tap(find.text('Reserva'));
       await tester.pumpAndSettle();
@@ -218,6 +223,7 @@ void main() {
               'minuto': 600,
               'duracion': 60,
               'sedeId': 'la-19',
+              'canchaId': 'la-19',
               'clienteNombre': 'Cliente de prueba',
               'telefono': '+51999888777',
               'estado': 'confirmada',
@@ -230,7 +236,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(find.textContaining('Cliente de prueba'), findsOneWidget);
+      expect(find.textContaining('Cliente de prueba'), findsWidgets);
       expect(find.text('Reserva'), findsNothing);
       expect(tester.takeException(), isNull);
       datos.addError(

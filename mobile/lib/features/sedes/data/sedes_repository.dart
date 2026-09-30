@@ -32,12 +32,12 @@ class SedesRepository {
     final nombre = '${datos['nombre']}'.trim();
     if (nombre.isEmpty) throw const FormatException('Completa el nombre.');
     final direccion = '${datos['direccion'] ?? ''}'.trim();
-    if (direccion.length > 300) {
+    if (direccion.length > 200) {
       throw const FormatException(
-        'La direccion publica admite hasta 300 caracteres.',
+        'La direccion publica admite hasta 200 caracteres.',
       );
     }
-    // La tarifa puede quedar vacia: la cancha se guarda como no reservable en
+    // La tarifa puede quedar vacia: se conserva pendiente en
     // lugar de inventar un precio. Lo mismo con la direccion.
     final escrito = '${datos['tarifaTurnoCentimos'] ?? ''}'.trim();
     final tarifa = escrito.isEmpty ? null : int.tryParse(escrito);
@@ -48,7 +48,7 @@ class SedesRepository {
       throw const FormatException('Tarifa por turno invalida.');
     }
     final activa = datos['activa'] == true;
-    final reservable = activa && direccion.isNotEmpty && tarifa != null;
+    final reservable = activa;
     final ahora = FieldValue.serverTimestamp();
     final privada = servicios.doc(negocio, 'canchas', id);
     final publica = servicios.db.doc('canchas_publicas/$id');
@@ -61,18 +61,10 @@ class SedesRepository {
       'negocioId': negocio,
       'activa': activa,
       'tarifaTurnoCentimos': tarifa,
-      // El horario vivia en la cancha. Ahora es del negocio, asi que se retira
-      // de los documentos existentes en lugar de dejar dos fuentes de verdad.
-      'tarifaCentimos': FieldValue.delete(),
-      'aperturaMinuto': FieldValue.delete(),
-      'cierreMinuto': FieldValue.delete(),
-      'duracionTurnoMinutos': FieldValue.delete(),
-      'actualizadoPor': servicios.uid,
+      // Conserva los campos heredados; las reservas usan el horario del negocio.
       'actualizadoEn': ahora,
     }, SetOptions(merge: true));
-    // La proyeccion publica marca `activa` con la definicion de reservable, no
-    // con el switch del panel: así la web solo lista canchas que el servidor
-    // efectivamente acepta.
+    // La proyeccion publica respeta la habilitacion; no requiere precio ni direccion.
     lote.set(publica, {
       'id': id,
       'negocioId': negocio,

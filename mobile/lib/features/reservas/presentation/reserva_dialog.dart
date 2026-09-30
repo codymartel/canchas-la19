@@ -172,7 +172,7 @@ class _ReservaDialogState extends State<ReservaDialog> {
         ),
       if (canchasNoReservables > 0)
         Text(
-          '$canchasNoReservables cancha(s) sin direccion, tarifa o habilitacion: '
+          '$canchasNoReservables cancha(s) sin habilitacion: '
           'no se pueden reservar.',
         ),
       if (inicios.isEmpty)
@@ -274,9 +274,7 @@ class _ReservaDialogState extends State<ReservaDialog> {
               );
             }
             if (canchaId == null) {
-              throw const FormatException(
-                'Elige una cancha habilitada con direccion y tarifa.',
-              );
+              throw const FormatException('Elige una cancha habilitada.');
             }
             if (!inicios.contains(minuto)) {
               throw const FormatException(

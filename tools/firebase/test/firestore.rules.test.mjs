@@ -874,13 +874,25 @@ test('solo el empleado asignado aprueba una solicitud larga tras comprobar dispo
     ref: doc(unassigned, 'negocios', BUSINESS, 'reservas', booking.id),
   };
   await assertFails(approvalBatch(unassigned, deniedBooking, EMPLOYEE).commit());
+  // Tambien el alta directa y la solicitud pendiente exigen asignacion.
+  await assertFails(bookingBatch(unassigned, makeBooking(unassigned, {
+    id:'sin-sede-corta',uid:EMPLOYEE,court:'la-23',minute:1200,duration:30,
+  })).commit());
+  await assertFails(bookingBatch(unassigned, makeBooking(unassigned, {
+    id:'sin-sede-larga',uid:EMPLOYEE,court:'la-23',minute:1200,duration:240,
+  })).commit());
 
   const admin = verified(ADMIN).firestore();
+  await assertFails(approvalBatch(admin, {...booking,ref:doc(admin,'negocios',BUSINESS,'reservas',booking.id)},ADMIN).commit());
+  await environment.withSecurityRulesDisabled(async context => {
+    await updateDoc(doc(context.firestore(),'negocios',BUSINESS,'empleados',EMPLOYEE),{sedes:['la-19','la-23']});
+  });
+  const assigned = verified(EMPLOYEE).firestore();
   const approvedBooking = {
     ...booking,
-    ref: doc(admin, 'negocios', BUSINESS, 'reservas', booking.id),
+    ref: doc(assigned, 'negocios', BUSINESS, 'reservas', booking.id),
   };
-  await assertSucceeds(approvalBatch(admin, approvedBooking, ADMIN).commit());
+  await assertSucceeds(approvalBatch(assigned, approvedBooking, EMPLOYEE).commit());
   const visible = (await getDoc(publicSlotRef(requester, booking))).data();
   assert.equal(visible.ocupados['600'], true);
 });
@@ -1565,38 +1577,19 @@ test('cancelar libera todos los slots atomicamente y permite reutilizarlos', asy
   }
 });
 
-test('una cancha sin direccion o sin tarifa no admite reservas', async () => {
+test('direccion y tarifa pendientes permiten reservar sin registrar pagos', async () => {
   await seedApplication();
   const db = verified(EMPLOYEE).firestore();
-  await environment.withSecurityRulesDisabled(async (context) => {
-    const admin = context.firestore();
-    await updateDoc(doc(admin, 'negocios', BUSINESS, 'canchas', 'la-23'), {
-      direccion: '',
-      tarifaTurnoCentimos: null,
-    });
+  await environment.withSecurityRulesDisabled(async context => {
+    await updateDoc(doc(context.firestore(), 'negocios', BUSINESS, 'canchas', COURT), {direccion: '', tarifaTurnoCentimos: null});
   });
-
-  // Habilitada pero incompleta: sigue sin ser reservable.
-  const sinDireccion = makeBooking(db, {
-    id: 'sin-direccion', uid: EMPLOYEE, court: 'la-23',
-  });
-  await assertFails(bookingBatch(db, sinDireccion).commit());
-
-  const sinTarifa = makeBooking(db, {
-    id: 'sin-tarifa', uid: EMPLOYEE, court: 'la-23',
-  });
-  await assertFails(bookingBatch(db, sinTarifa).commit());
-
-  // Tampoco se proyecta activa a la web publica.
-  await assertFails(setDoc(doc(db, 'canchas_publicas', 'la-23'), {
-    id: 'la-23',
-    negocioId: BUSINESS,
-    nombre: 'Cancha La 23',
-    sedeId: 'la-23',
-    direccion: '',
-    activa: true,
-    tarifaTurnoCentimos: null,
-  }));
+  const booking = makeBooking(db, {id:'pendiente-config', uid:EMPLOYEE});
+  await assertSucceeds(bookingBatch(db, booking).commit());
+  assert.equal((await getDoc(booking.ref)).data().adelantoCentimos, 0);
+  await assertFails(bookingBatch(db, makeBooking(db,{id:'conflicto-config',uid:EMPLOYEE})).commit());
+  const publicDb = anonymous(ANON_A).firestore();
+  const publico = makeBooking(publicDb,{id:'r_publico_config',uid:ANON_A,minute:900,publicRequest:true});
+  await assertSucceeds(bookingBatch(publicDb, publico).commit());
 });
 
 test('sin horario global configurado ninguna cancha admite reservas', async () => {

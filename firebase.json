@@ -1,9 +1,112 @@
 {
-  "firestore": {"rules":"mobile/firestore.rules", "indexes":"mobile/firestore.indexes.json"},
-  "database": {"rules":"mobile/database.rules.json"},
+  "firestore": {
+    "rules": "mobile/firestore.rules",
+    "indexes": "mobile/firestore.indexes.json"
+  },
+  "database": {
+    "rules": "mobile/database.rules.json"
+  },
   "hosting": [
-    {"target":"publica","public":"web/public", "ignore":["firebase.json","**/.*","**/node_modules/**"], "rewrites":[{"source":"**","destination":"/index.html"}], "headers":[{"source":"**", "headers":[{"key":"X-Content-Type-Options","value":"nosniff"},{"key":"Referrer-Policy","value":"strict-origin-when-cross-origin"}]},{"source":"**/*.js","headers":[{"key":"Cache-Control","value":"no-cache"}]}]},
-    {"target":"personal","public":"mobile/build/web","ignore":["firebase.json","**/.*","**/node_modules/**"],"rewrites":[{"source":"**","destination":"/index.html"}],"headers":[{"source":"**/*.js","headers":[{"key":"Cache-Control","value":"no-cache"}]}]}
+    {
+      "target": "publica",
+      "public": "web/public",
+      "ignore": [
+        "firebase.json",
+        "**/.*",
+        "**/node_modules/**"
+      ],
+      "rewrites": [
+        {
+          "source": "**",
+          "destination": "/index.html"
+        }
+      ],
+      "headers": [
+        {
+          "source": "**",
+          "headers": [
+            {
+              "key": "X-Content-Type-Options",
+              "value": "nosniff"
+            },
+            {
+              "key": "Referrer-Policy",
+              "value": "strict-origin-when-cross-origin"
+            }
+          ]
+        },
+        {
+          "source": "**/*.js",
+          "headers": [
+            {
+              "key": "Cache-Control",
+              "value": "no-cache, no-store, must-revalidate"
+            }
+          ]
+        },
+        {
+          "source": "/index.html",
+          "headers": [
+            {
+              "key": "Cache-Control",
+              "value": "no-cache, no-store, must-revalidate"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "target": "personal",
+      "public": "mobile/build/web",
+      "ignore": [
+        "firebase.json",
+        "**/.*",
+        "**/node_modules/**"
+      ],
+      "rewrites": [
+        {
+          "source": "**",
+          "destination": "/index.html"
+        }
+      ],
+      "headers": [
+        {
+          "source": "**/*.js",
+          "headers": [
+            {
+              "key": "Cache-Control",
+              "value": "no-cache, no-store, must-revalidate"
+            }
+          ]
+        },
+        {
+          "source": "/index.html",
+          "headers": [
+            {
+              "key": "Cache-Control",
+              "value": "no-cache, no-store, must-revalidate"
+            }
+          ]
+        }
+      ]
+    }
   ],
-  "emulators":{"auth":{"port":9099},"firestore":{"port":8081},"database":{"port":9000},"hosting":{"port":5000},"ui":{"enabled":false},"singleProjectMode":false}
+  "emulators": {
+    "auth": {
+      "port": 9099
+    },
+    "firestore": {
+      "port": 8081
+    },
+    "database": {
+      "port": 9000
+    },
+    "hosting": {
+      "port": 5000
+    },
+    "ui": {
+      "enabled": false
+    },
+    "singleProjectMode": false
+  }
 }

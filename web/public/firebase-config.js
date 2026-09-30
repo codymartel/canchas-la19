@@ -12,11 +12,9 @@ if (['localhost','127.0.0.1'].includes(location.hostname)) {
   window.GRASS_FIREBASE_CONFIG.apiKey = 'demo-key';
 }
 
-// Las reservas en linea permanecen deshabilitadas hasta obtener una reserva
-// valida de extremo a extremo y una lectura publica que no exponga datos internos.
-// Las canchas publicas, aunque existan, no habilitan el formulario por si solas.
-// Solo un origen local puede pedir el formulario con ?reservas=1 para las pruebas
-// de navegador; cualquier otro origen (incluido el sitio publicado) queda en false.
+// La activacion en produccion es deliberada, despues de verificar reglas y panel.
+// Un origen local usa exclusivamente demo-grass-local y requiere ?reservas=1.
 const origenLocal = ['localhost', '127.0.0.1'].includes(location.hostname);
-window.GRASS_RESERVAS_HABILITADAS = origenLocal
-  && new URLSearchParams(location.search).get('reservas') === '1';
+const reservasProduccionHabilitadas = false;
+window.GRASS_RESERVAS_HABILITADAS = reservasProduccionHabilitadas
+  || (origenLocal && new URLSearchParams(location.search).get('reservas') === '1');

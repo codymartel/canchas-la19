@@ -10,7 +10,7 @@ import '../application/gestionar_reserva.dart';
 class AgendaProvider extends Operacion {
   final ReservasRepository repository;
   late final GestionarReserva gestionar = GestionarReserva(repository);
-  String dia = fechaLima(), sede = '';
+  String dia = diaOperativoLima(), sede = '';
   bool cargando = true;
   String? errorCarga;
   bool desdeCache = false, escriturasPendientes = false;
@@ -27,7 +27,7 @@ class AgendaProvider extends Operacion {
   AgendaProvider(this.repository) {
     cargar();
     _medianoche = Timer.periodic(const Duration(minutes: 1), (_) {
-      final hoy = fechaLima();
+      final hoy = diaOperativoLima();
       if (_siguiendoHoy && dia != hoy) {
         dia = hoy;
         cargar();
@@ -50,7 +50,7 @@ class AgendaProvider extends Operacion {
 
   void cambiarDia(String valor) {
     dia = valor;
-    _siguiendoHoy = valor == fechaLima();
+    _siguiendoHoy = valor == diaOperativoLima();
     cargar();
   }
 

@@ -99,7 +99,7 @@ String _resumenConfiguracion(Registro cancha) {
     partes.add('${soles(cancha.entero('tarifaTurnoCentimos'))} por turno');
   }
   if (partes.isEmpty) {
-    return 'Sin direccion ni tarifa: no reservable.';
+    return 'Direccion y tarifa pendientes.';
   }
   if (pendientesDeReserva(cancha).isNotEmpty) {
     partes.add('no reservable todavia');
@@ -194,14 +194,7 @@ class _CanchaDialogState extends State<CanchaDialog> {
   }
 
   String _aviso() {
-    final sinDireccion = direccion.text.trim().isEmpty;
-    final sinTarifa = tarifa.text.trim().isEmpty;
-    if (activa && (sinDireccion || sinTarifa)) {
-      return 'Falta ${sinDireccion ? 'direccion' : 'tarifa'}: la cancha se '
-          'guardara como no reservable y la web no la ofrecera.';
-    }
-    return 'La direccion y la tarifa son publicas. La direccion y la tarifa de '
-        'otra cancha no se muestran aqui. Habilitada sin tarifa o sin '
-        'direccion, el servidor rechaza la reserva.';
+    return 'Direccion y tarifa pueden quedar pendientes. La habilitacion permite '
+        'reservar; no se registra ningun pago.';
   }
 }

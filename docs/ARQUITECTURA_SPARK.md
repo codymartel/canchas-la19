@@ -1,5 +1,24 @@
 # Grass Sintetico en Firebase Spark
 
+## Etapa operativa autorizada (29 de septiembre de 2026)
+
+La configuracion real usa apertura 420 (07:00), cierre 60 (01:00 del dia siguiente),
+turnos de 30 minutos y America/Lima. Cada dia operativo tiene 36 franjas, incluidas
+1440 y 1470 de la madrugada siguiente. El selector de hoy conserva el dia operativo
+anterior antes de las 07:00. Direccion y tarifa pueden quedar pendientes; solo la
+habilitacion de la cancha determina su reservabilidad, sin relajar privacidad ni
+solapamientos. Los pagos siguen en cero y no se verifican. Una solicitud mayor
+de 180 minutos ocupa solo al aprobarla un empleado activo asignado a la cancha,
+revalidando disponibilidad. El gerente conserva creacion y cancelacion, pero no
+aprueba solicitudes largas sin una ficha de empleado asignado.
+
+El corte de produccion inventariado contiene 13 documentos, dos clientes y un
+empleado; no se encontraron reservas, bloqueos ni rutas antiguas de agenda.
+Los respaldos privados y resultados completos permanecen en .production-audit/,
+excluida de Git. No se borran campos heredados ni se modifica clientes o empleados.
+Los apartados historicos siguientes describen el corte previo; el informe de
+validacion de esta etapa detalla sus resultados y publicaciones.
+
 ## Configuracion canonica
 
 - El comando de Firebase debe ejecutarse desde la raiz `canchas-cliente/`.
@@ -205,4 +224,3 @@ Hasta que exista un backend de pagos, los importes no se gestionan: `montoCentim
 ### Debilidad conocida
 
 El documento publico admite una reescritura identica: si el mapa enviado coincide byte a byte con el de la agenda privada, los dos diffs quedan vacios y la regla los da por iguales. No fabrica ocupacion, no altera estado y no filtra informacion, porque ese documento ya es legible por cualquiera. Se deja constancia en vez de ocultarlo.
-

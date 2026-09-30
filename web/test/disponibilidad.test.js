@@ -32,3 +32,6 @@ test('rechaza un horario global ausente o invalido',()=>{
   assert.equal(leerHorario({aperturaMinuto:480,cierreMinuto:1470,duracionTurnoMinutos:60}),null);
   assert.equal(leerHorario({aperturaMinuto:480,cierreMinuto:1320,duracionTurnoMinutos:300}),null);
 });
+
+import {diaOperativoLima} from '../public/disponibilidad.js';
+test('madrugada pertenece al dia operativo anterior',()=>assert.equal(diaOperativoLima(Date.parse('2026-09-30T00:30:00-05:00')),'2026-09-29'));

@@ -188,13 +188,16 @@ service cloud.firestore {
         && d.duracionTurnoMinutos % 30 == 0;
     }
 
-    // La direccion y la tarifa siguen siendo por cancha: sin las dos, la
-    // cancha no aparece en la web ni acepta reservas aunque este habilitada.
+    // Direccion y tarifa pendientes no alteran disponibilidad ni permisos.
     function reservable(c) {
-      return c.activa == true
-        && c.direccion is string && c.direccion.size() > 0
-        && c.tarifaTurnoCentimos is int
-        && c.tarifaTurnoCentimos >= 0 && c.tarifaTurnoCentimos <= 100000000;
+      return c.activa == true;
+    }
+
+    function empleadoAsignado(n, cancha) {
+      let ruta = /databases/$(database)/documents/negocios/$(n)/empleados/$(request.auth.uid);
+      return esEmpleadoActivo(n)
+        && get(ruta).data.permisos.reservas == true
+        && cancha in get(ruta).data.sedes;
     }
 
     function horarioNegocioConfigurado(n) {
@@ -403,6 +406,7 @@ service cloud.firestore {
         && ahora.atendidoPor == request.auth.uid
         && (antes.estado == 'pendiente' && antes.duracion > 180
             && (ahora.estado == 'confirmada'
+                && empleadoAsignado(n, antes.canchaId)
                 && cambioOcupaAgenda(n, id, coleccion, ahora)
               || ahora.estado == 'rechazada'
                 )
@@ -576,8 +580,7 @@ service cloud.firestore {
           && request.resource.data.activa == false
           && request.resource.data.direccion == ''
           && request.resource.data.tarifaTurnoCentimos == null;
-        // La direccion y la tarifa pueden quedar vacias: la cancha simplemente
-        // no es reservable y no se proyecta activa a la web.
+        // Direccion y tarifa pueden quedar pendientes sin impedir reservas.
         allow update: if esAdministradorDe(n)
           && resource.data.sedeId == id
           && request.resource.data.sedeId == resource.data.sedeId

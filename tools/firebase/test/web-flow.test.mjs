@@ -19,6 +19,8 @@ import {
   query,
   where,
   writeBatch,
+  runTransaction,
+  onSnapshot,
 } from 'firebase/firestore';
 import { solicitarReserva } from '../../../web/public/reserva.js';
 
@@ -46,8 +48,8 @@ function futureDay(days = 2) {
 }
 
 const horarioGlobal = {
-  aperturaMinuto: 480,
-  cierreMinuto: 1320,
+  aperturaMinuto: 420,
+  cierreMinuto: 60,
   duracionTurnoMinutos: 30,
 };
 
@@ -80,9 +82,9 @@ await environment.withSecurityRulesDisabled(async context => {
       negocioId: BUSINESS,
       sedeId: id,
       nombre: name,
-      direccion: `Direccion ${name}`,
+      direccion: '',
       activa: true,
-      tarifaTurnoCentimos: 5000,
+      tarifaTurnoCentimos: null,
     };
     batch.set(doc(db, `negocios/${BUSINESS}/canchas/${id}`), court);
     batch.set(doc(db, `canchas_publicas/${id}`), court);
@@ -207,6 +209,55 @@ const outsider = environment.authenticatedContext(OUTSIDER, {
 await assertFails(getDoc(doc(outsider, `negocios/${BUSINESS}/reservas/${created.id}`)));
 await assertFails(getDoc(doc(outsider, `negocios/${BUSINESS}/empleados/${EMPLOYEE}`)));
 
+// Dos sesiones reales de SDK observan las tres canchas sin recargar.
+const vistas=new Map(), privadas=new Map(), stops=[];
+for(const court of ['la-19','la-23','la-24']){
+  stops.push(secondDb.doc('agenda_publica/'+BUSINESS+'/canchas/'+court+'/dias/'+day).onSnapshot(s=>vistas.set(court,s.data()?.ocupados??{})));
+  stops.push(onSnapshot(doc(staff,'negocios/'+BUSINESS+'/agenda/'+court+'/dias/'+day),s=>privadas.set(court,s.data()?.ocupados??{})));
+}
+async function esperar(test){const limit=Date.now()+10000;while(!test()){if(Date.now()>limit)throw Error('Listener no sincronizado');await new Promise(r=>setTimeout(r,20));}}
+await esperar(()=>vistas.size===3&&privadas.size===3);
+assert.deepEqual(vistas.get('la-23'),{});assert.deepEqual(vistas.get('la-24'),{});
+async function resolver(id,estado){
+  await runTransaction(staff,async tx=>{
+    const ref=doc(staff,'negocios/'+BUSINESS+'/reservas/'+id);const s=await tx.get(ref),r=s.data();
+    const agenda=doc(staff,'negocios/'+BUSINESS+'/agenda/'+r.canchaId+'/dias/'+r.dia);
+    const pub=doc(staff,'agenda_publica/'+BUSINESS+'/canchas/'+r.canchaId+'/dias/'+r.dia);
+    const a=await tx.get(agenda),ocupados={...(a.data()?.ocupados??{})};
+    if(estado==='confirmada'&&r.minutos.some(m=>ocupados[m]))throw Error('Horario ocupado');
+    for(const m of r.minutos){if(estado==='cancelada')delete ocupados[m];else ocupados[m]=true;}
+    tx.update(ref,{estado,version:r.version+1,atendidoPor:EMPLOYEE,updatedAt:firebase.firestore.Timestamp.now()});
+    tx.set(agenda,{ocupados,ultimaOperacion:{reservaId:id,coleccion:'reservas',tipo:estado==='cancelada'?'liberar':'ocupar',minutos:r.minutos}});
+    tx.set(pub,{ocupados});
+  });
+}
+const reservar=(datos,database=db,identidad=uid)=>solicitarReserva({firebase,db:database,uid:identidad,negocio:BUSINESS,datos:{...request,...datos}});
+const nocturnas=[];
+for(const court of ['la-19','la-23','la-24']){
+ const r=await reservar({requestId:'nocturna-'+court,canchaId:court,minuto:1440,duracion:60});nocturnas.push(r.id);
+ await esperar(()=>vistas.get(court)?.['1440']===true&&privadas.get(court)?.['1470']===true);
+ const stored=(await getDoc(doc(staff,'negocios/'+BUSINESS+'/reservas/'+r.id))).data();
+ assert.equal(stored.dia,day);assert.equal(stored.inicio.toDate().toISOString(),new Date(new Date(day+'T00:00:00-05:00').getTime()+1440*60000).toISOString());
+ assert.deepEqual(Object.keys(vistas.get(court)).filter(m=>Number(m)>=1440),['1440','1470']);
+}
+const race=await Promise.allSettled([
+ reservar({requestId:'integracion-race-a',minuto:780}),
+ reservar({requestId:'integracion-race-b',minuto:780},secondDb,secondAuth.currentUser.uid),
+]);assert.equal(race.filter(r=>r.status==='fulfilled').length,1);
+const winner=race.find(r=>r.status==='fulfilled').value.id;await resolver(winner,'cancelada');
+const larga=await reservar({requestId:'cinco-horas',canchaId:'la-23',minuto:600,duracion:300});
+assert.equal(larga.estado,'pendiente');assert.equal(vistas.get('la-23')['600'],undefined);
+await assertFails(writeBatch(outsider).update(doc(outsider,'negocios/'+BUSINESS+'/reservas/'+larga.id),{estado:'confirmada',version:2,atendidoPor:OUTSIDER}).commit());
+const corta=await reservar({requestId:'interferencia',canchaId:'la-23',minuto:660,duracion:30});
+await assert.rejects(resolver(larga.id,'confirmada'),/Horario ocupado/);
+await resolver(corta.id,'cancelada');await resolver(larga.id,'confirmada');
+await esperar(()=>vistas.get('la-23')['600']===true&&privadas.get('la-23')['870']===true);
+await resolver(larga.id,'cancelada');
+for(const id of nocturnas)await resolver(id,'cancelada');
+await resolver(created.id,'cancelada');
+await esperar(()=>[...vistas.values()].every(v=>Object.keys(v).length===0)&&[...privadas.values()].every(v=>Object.keys(v).length===0));
+for(const stop of stops)stop();
+console.log('Integracion: listeners de tres canchas, carrera de dos sesiones, madrugada operativa, cinco horas, rechazo ajeno, revalidacion y cancelacion OK.');
 await auth.signOut();
 await secondAuth.signOut();
 await app.delete();

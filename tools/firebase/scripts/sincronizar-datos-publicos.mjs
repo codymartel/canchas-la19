@@ -133,8 +133,9 @@ for (const id of COURTS) {
   if (court.id !== id || court.sedeId !== id || court.negocioId !== BUSINESS) {
     issues.push(`Identidad invalida en la cancha ${id}.`);
   }
-  if (!court.nombre || !court.direccion) issues.push(`Falta nombre o direccion en ${id}.`);
-  if (!Number.isInteger(court.tarifaTurnoCentimos) || court.tarifaTurnoCentimos < 0) {
+  if (!court.nombre) issues.push(`Falta nombre en ${id}.`);
+  if (court.direccion != null && typeof court.direccion !== 'string') issues.push(`Direccion invalida en ${id}.`);
+  if (court.tarifaTurnoCentimos != null && (!Number.isInteger(court.tarifaTurnoCentimos) || court.tarifaTurnoCentimos < 0)) {
     issues.push(`Falta una tarifa por turno valida en ${id}.`);
   }
 }
@@ -196,9 +197,9 @@ if (!inspect) {
     negocioId: BUSINESS,
     nombre: court.nombre,
     sedeId: id,
-    direccion: court.direccion,
+    direccion: court.direccion ?? '',
     activa: court.activa === true,
-    tarifaTurnoCentimos: court.tarifaTurnoCentimos,
+    tarifaTurnoCentimos: court.tarifaTurnoCentimos ?? null,
     };
     writes.push({ update: {
     name: `projects/${projectId}/databases/(default)/documents/canchas_publicas/${id}`,

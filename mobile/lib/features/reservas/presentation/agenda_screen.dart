@@ -55,7 +55,7 @@ class AgendaScreen extends StatelessWidget {
     listenable: provider,
     builder: (context, _) {
       presencia.observar(provider.dia);
-      final filas = provider.filas, todas = provider.todasFilas;
+      final todas = provider.todasFilas;
       return Column(
         children: [
           Padding(
@@ -207,123 +207,12 @@ class AgendaScreen extends StatelessWidget {
             ),
           if (provider.cargando) const LinearProgressIndicator(),
           Expanded(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final disponibilidad = ListaDatos(
-                  stream: sedesProvider.canchas,
-                  builder: (context, canchas) => _HorariosLibres(
-                    canchas: canchas,
-                    horario: sedesProvider.horario,
-                    ocupacion: provider.ocupacionPorCancha,
-                    sede: provider.sede,
-                  ),
-                );
-                if (constraints.maxWidth < 950) {
-                  final mostrarVacio = filas.isEmpty && !provider.cargando;
-                  return ListView.builder(
-                    itemCount: 1 + filas.length,
-                    itemBuilder: (context, i) {
-                      if (i == 0) {
-                        return Column(
-                          children: [
-                            if (mostrarVacio)
-                              const Padding(
-                                padding: EdgeInsets.all(12),
-                                child: Text(
-                                  'Sin reservas ni bloqueos para este día.',
-                                ),
-                              ),
-                            disponibilidad,
-                          ],
-                        );
-                      }
-                      if (filas.isEmpty) {
-                        return const SizedBox.shrink();
-                      }
-                      final r = filas[i - 1];
-                      return Card(
-                        child: ListTile(
-                          onTap: () => detalle(context, r),
-                          title: Text(
-                            '${hora(r.minutoEnDia(provider.dia))} · ${sedes[r.texto('sedeId')]} · ${r.texto('clienteNombre')}',
-                          ),
-                          subtitle: Text(
-                            '${r.bloqueo ? 'Mantenimiento' : (r.activo('_pendiente') ? 'guardando' : r.estado)} · ${r.entero('duracion')} min\n${r.texto('telefono')}',
-                          ),
-                          trailing: _EstadoReserva(estado: r.estado),
-                        ),
-                      );
-                    },
-                  );
-                }
-                return Column(
-                  children: [
-                    disponibilidad,
-                    Expanded(
-                      child: filas.isEmpty && !provider.cargando
-                          ? const Center(
-                              child: Text(
-                                'Sin reservas ni bloqueos para este día.',
-                              ),
-                            )
-                          : SingleChildScrollView(
-                              child: SingleChildScrollView(
-                                scrollDirection: Axis.horizontal,
-                                child: DataTable(
-                                  columns:
-                                      [
-                                            'Hora',
-                                            'Sede / cancha',
-                                            'Nombre',
-                                            'Teléfono',
-                                            'Estado',
-                                          ]
-                                          .map(
-                                            (t) => DataColumn(label: Text(t)),
-                                          )
-                                          .toList(),
-                                  rows: filas
-                                      .map(
-                                        (r) => DataRow(
-                                          onSelectChanged: (_) =>
-                                              detalle(context, r),
-                                          cells: [
-                                            DataCell(
-                                              Text(
-                                                hora(
-                                                  r.minutoEnDia(provider.dia),
-                                                ),
-                                              ),
-                                            ),
-                                            DataCell(
-                                              Text(
-                                                '${sedes[r.texto('sedeId')]} / ${r.texto('canchaId')}',
-                                              ),
-                                            ),
-                                            DataCell(
-                                              Text(r.texto('clienteNombre')),
-                                            ),
-                                            DataCell(Text(r.texto('telefono'))),
-                                            DataCell(
-                                              _EstadoReserva(
-                                                estado: r.activo('_pendiente')
-                                                    ? 'guardando'
-                                                    : r.bloqueo
-                                                    ? 'Mantenimiento · ${r.estado}'
-                                                    : r.estado,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      )
-                                      .toList(),
-                                ),
-                              ),
-                            ),
-                    ),
-                  ],
-                );
-              },
+            child: _TablasAgenda(
+              horario: sedesProvider.horario,
+              dia: provider.dia,
+              reservas: todas,
+              ocupacion: provider.ocupacionPorCancha,
+              onDetalle: (r) => detalle(context, r),
             ),
           ),
         ],
@@ -332,107 +221,142 @@ class AgendaScreen extends StatelessWidget {
   );
 }
 
-class _HorariosLibres extends StatelessWidget {
-  final List<Registro> canchas;
+class _TablasAgenda extends StatelessWidget {
   final Stream<HorarioNegocio?> horario;
+  final String dia;
+  final List<Reserva> reservas;
   final Map<String, Set<int>> ocupacion;
-  final String sede;
-  const _HorariosLibres({
-    required this.canchas,
+  final void Function(Reserva) onDetalle;
+  const _TablasAgenda({
     required this.horario,
+    required this.dia,
+    required this.reservas,
     required this.ocupacion,
-    required this.sede,
+    required this.onDetalle,
   });
-
-  /// Turnos base libres de una cancha, usando el horario comun del negocio.
-  List<int> libres(Registro cancha, HorarioNegocio vigente) {
-    if (!esReservable(cancha)) return const [];
-    final ocupados = ocupacion[cancha.id] ?? const <int>{};
-    return [
-      for (final inicio in iniciosDeTurno(
-        horario: vigente,
-        duracion: vigente.duracionTurno,
-      ))
-        if (minutosDe(
-          minuto: inicio,
-          duracion: vigente.duracionTurno,
-        ).every((minuto) => !ocupados.contains(int.parse(minuto))))
-          inicio,
-    ];
-  }
 
   @override
   Widget build(BuildContext context) => StreamBuilder<HorarioNegocio?>(
     stream: horario,
     builder: (context, snapshot) {
-      final vigente = snapshot.data;
-      final visibles = canchas
-          .where((c) => esReservable(c) && (sede.isEmpty || c.id == sede))
-          .toList();
-      if (vigente == null) {
-        return const Padding(
-          padding: EdgeInsets.all(12),
-          child: Text(
-            'El horario de atencion no esta configurado. Configuralo para ver '
-            'los turnos libres.',
-          ),
+      final h = snapshot.data;
+      if (h == null) {
+        return const Center(
+          child: Text('El horario de atencion no esta configurado.'),
         );
       }
-      if (visibles.isEmpty) {
-        return const Padding(
-          padding: EdgeInsets.all(12),
-          child: Text(
-            'Ninguna cancha es reservable: falta habilitacion, direccion o tarifa.',
-          ),
-        );
-      }
-      return Padding(
-        padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(
-              'Horarios libres · ${vigente.resumen}',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            for (final cancha in visibles)
-              SizedBox(
-                height: 50,
-                child: Row(
-                  children: [
-                    SizedBox(
-                      width: 90,
-                      child: Text(
-                        sedes[cancha.texto('sedeId')] ?? cancha.texto('nombre'),
-                        style: const TextStyle(fontWeight: FontWeight.w700),
-                      ),
-                    ),
-                    Expanded(
-                      child: Builder(
-                        builder: (context) {
-                          final horas = libres(cancha, vigente);
-                          if (horas.isEmpty) {
-                            return const Text('Sin turnos libres');
-                          }
-                          return ListView.separated(
-                            scrollDirection: Axis.horizontal,
-                            itemCount: horas.length,
-                            separatorBuilder: (_, _) =>
-                                const SizedBox(width: 6),
-                            itemBuilder: (_, i) =>
-                                Chip(label: Text(hora(horas[i]))),
-                          );
-                        },
-                      ),
-                    ),
-                  ],
-                ),
+      final limite = h.cruzaMedianoche ? h.cierre + 1440 : h.cierre;
+      return LayoutBuilder(
+        builder: (context, constraints) {
+          final ancho = constraints.maxWidth >= 1000
+              ? (constraints.maxWidth - 48) / 3
+              : constraints.maxWidth - 24;
+          return SingleChildScrollView(
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Dia operativo $dia · America/Lima · ${h.resumen}'),
+                  if (reservas.isEmpty)
+                    const Text('Sin reservas ni bloqueos para este día.'),
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 12,
+                    runSpacing: 12,
+                    children: [
+                      for (final cancha in sedesIds)
+                        SizedBox(
+                          width: ancho,
+                          child: Card(
+                            child: Padding(
+                              padding: const EdgeInsets.all(8),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Tabla ${sedes[cancha]}',
+                                    style: Theme.of(
+                                      context,
+                                    ).textTheme.titleLarge,
+                                  ),
+                                  for (
+                                    var minuto = h.apertura;
+                                    minuto < limite;
+                                    minuto += 30
+                                  )
+                                    _fila(cancha, minuto),
+                                  for (final r in reservas.where(
+                                    (r) =>
+                                        r.texto('canchaId') == cancha &&
+                                        r.estado == 'pendiente',
+                                  ))
+                                    TextButton(
+                                      onPressed: () => onDetalle(r),
+                                      child: Text(
+                                        'Solicitud pendiente · ${r.texto('clienteNombre')} · ${hora(r.entero('minuto'))} · ${r.entero('duracion')} min',
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ],
               ),
-          ],
-        ),
+            ),
+          );
+        },
       );
     },
   );
+
+  Widget _fila(String cancha, int minuto) {
+    final candidatas = reservas.where(
+      (r) =>
+          r.texto('canchaId') == cancha &&
+          r.ocupa &&
+          minuto >= r.entero('minuto') &&
+          minuto < r.entero('minuto') + r.entero('duracion'),
+    );
+    final r = candidatas.isEmpty ? null : candidatas.first;
+    final ocupado = ocupacion[cancha]?.contains(minuto) == true;
+    return InkWell(
+      onTap: r == null ? null : () => onDetalle(r),
+      child: Container(
+        constraints: const BoxConstraints(minHeight: 48),
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        decoration: const BoxDecoration(
+          border: Border(bottom: BorderSide(color: Colors.black12)),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
+              width: 105,
+              child: Text('${hora(minuto)}\n${hora(minuto + 30)}'),
+            ),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (r != null) Text(r.texto('clienteNombre')),
+                  if (r != null) Text(r.texto('telefono')),
+                  _EstadoReserva(
+                    estado: r?.estado ?? (ocupado ? 'Ocupado' : 'Libre'),
+                  ),
+                  if (r?.texto('atendidoPor').isNotEmpty == true)
+                    Text('Atiende: ${r!.texto('atendidoPor')}'),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _EstadoConexion extends StatelessWidget {
@@ -538,6 +462,18 @@ class DetalleReserva extends StatefulWidget {
 }
 
 class _DetalleReservaState extends State<DetalleReserva> {
+  bool asignado = false;
+  @override
+  void initState() {
+    super.initState();
+    widget.provider.repository
+        .puedeAprobar(widget.reserva.texto('canchaId'))
+        .then((valor) {
+          if (mounted) setState(() => asignado = valor);
+        })
+        .catchError((Object _) {});
+  }
+
   late String estado = widget.reserva.estado == 'pendiente'
       ? 'confirmada'
       : widget.reserva.estado == 'confirmada'
@@ -549,7 +485,8 @@ class _DetalleReservaState extends State<DetalleReserva> {
     final r = widget.reserva,
         editable =
             widget.puedeEscribir &&
-            ['pendiente', 'confirmada'].contains(r.estado);
+            ['pendiente', 'confirmada'].contains(r.estado) &&
+            (r.estado != 'pendiente' || asignado);
     final opciones = r.estado == 'pendiente'
         ? ['confirmada', 'rechazada']
         : ['cancelada', 'no_asistio'];
@@ -559,6 +496,10 @@ class _DetalleReservaState extends State<DetalleReserva> {
         Text(
           '${r.texto('dia')} ${hora(r.entero('minuto'))} · ${r.entero('duracion')} minutos\n${r.texto('telefono')}\nOrigen: ${r.texto('origen')}\nEstado actual: ${r.estado}\nResponsable: ${r.texto('atendidoPor')}\nCreada: ${r.datos['createdAt']}\nActualizada: ${r.datos['updatedAt']}',
         ),
+        if (r.estado == 'pendiente' && !asignado)
+          const Text(
+            'La solicitud debe resolverla el empleado asignado a esta cancha.',
+          ),
         if (editable) ...[
           DropdownButton<String>(
             value: opciones.contains(estado) ? estado : opciones.first,

@@ -1,4 +1,4 @@
-import {hora,soles,hoyLima,iniciosDeTurno,siguienteDia,leerHorario} from './disponibilidad.js';
+import {hora,soles,hoyLima,diaOperativoLima,iniciosDeTurno,siguienteDia,leerHorario} from './disponibilidad.js';
 import {solicitarReserva} from './reserva.js';
 
 const $ = id => document.getElementById(id);
@@ -15,12 +15,13 @@ if (['localhost','127.0.0.1'].includes(location.hostname)) {
 }
 
 let canchas = [], promociones = [], ocupacion = new Map(), horario = null;
+let suscripciones = [];
 let enviando = false, solicitud = null, cargando = false, revision = 0, completada = false;
 
 // Mientras las reservas esten deshabilitadas el formulario no se ofrece: se
 // oculta y todos sus controles quedan inutilizables, aunque se publiquen canchas.
 function aplicarEstadoReservas(){
-  if(RESERVAS)return;
+  if(RESERVAS){$('reserva').hidden=false;$('aviso-reservas').hidden=true;return;}
   $('reserva').hidden=true;
   $('campos').disabled=true;
   for(const control of $('campos').querySelectorAll('input,select'))control.disabled=true;
@@ -55,8 +56,8 @@ function libresCancha(canchaId,dia){
   const usados=ocupacion.get(canchaId)??new Set();
   const posibles=[];
   if(!horario)return posibles;
-  const ahoraLima=new Date(Date.now()-5*3600000);
-  const minimo=dia===hoyLima()?Math.ceil((ahoraLima.getUTCHours()*60+ahoraLima.getUTCMinutes())/30)*30:0;
+  const base=new Date(`${dia}T00:00:00-05:00`).getTime();
+  const minimo=Math.max(0,Math.ceil((Date.now()-base)/1800000)*30);
   const apertura=horario.aperturaMinuto,cierre=horario.cierreMinuto;
   const limite=cierre>apertura?cierre:1440+cierre;
   for(let m=apertura;m<limite;m+=30)if(m>=minimo&&!usados.has(m))posibles.push(m);
@@ -72,11 +73,20 @@ function tarjetasCanchas(){
     else{
       const turno=horario?.duracionTurnoMinutos;
       const proximos=RESERVAS&&turno?iniciosDeTurno(libresCancha(cancha.id,$('dia').value),turno,horario.aperturaMinuto,turno).slice(0,4).map(hora).join(' · '):'';
-      const lineas=[`${cancha.nombre} · ${cancha.direccion}`,`${soles(cancha.tarifaTurnoCentimos)}${turno?` por turno de ${turno} min`:''}`];
+      const lineas=[cancha.direccion||'Dirección pendiente',Number.isInteger(cancha.tarifaTurnoCentimos)?`${soles(cancha.tarifaTurnoCentimos)} por turno`:'Tarifa pendiente'];
       if(RESERVAS)lineas.push(`Próximos inicios: ${proximos||'sin horarios libres'}`);
       p.textContent=lineas.join('\n');
     }
-    article.append(p);contenedor.append(article);
+    article.append(p);
+    if(cancha&&horario){
+      const table=document.createElement('table'),caption=document.createElement('caption');
+      caption.textContent=`Día operativo ${$('dia').value} · 07:00 a 01:00 (+1 día) · America/Lima`;table.append(caption);
+      const head=document.createElement('tr');for(const label of ['Hora','Disponibilidad']){const th=document.createElement('th');th.textContent=label;head.append(th);}table.append(head);
+      const usados=ocupacion.get(id)??new Set();
+      for(let m=horario.aperturaMinuto;m<(horario.cierreMinuto>horario.aperturaMinuto?horario.cierreMinuto:1440+horario.cierreMinuto);m+=30){const row=document.createElement('tr');for(const label of [hora(m)+' – '+hora(m+30),usados.has(m)?'Ocupado':'Libre']){const td=document.createElement('td');td.textContent=label;row.append(td);}table.append(row);}
+      article.append(table);
+    }
+    contenedor.append(article);
   }
 }
 function tarjetasPromociones(){
@@ -102,7 +112,7 @@ function actualizarHoras(){
 function actualizarPrecio(){
   const c=canchas.find(c=>c.id===$('cancha').value);
   const turno=horario?.duracionTurnoMinutos,duracion=Number($('duracion').value);
-  $('precio').textContent=c&&turno&&duracion
+  $('precio').textContent=c&&!Number.isInteger(c.tarifaTurnoCentimos)?'Tarifa pendiente. No se solicita ni verifica un pago.':c&&turno&&duracion
     ? `Referencial: ${soles(c.tarifaTurnoCentimos*duracion/turno)} por ${duracion} minutos. El personal confirma el precio total acordado.`
     :'Selecciona una cancha habilitada.';
 }
@@ -138,11 +148,17 @@ async function cargar(){
     if(actual!==revision||dia!==$('dia').value)return;
     canchas=canchasSnap.docs.map(d=>({id:d.id,...d.data()}));
     promociones=promosSnap.docs.map(d=>({id:d.id,...d.data()}));
+    for(const cancelar of suscripciones)cancelar();suscripciones=[];
+    ocupacion=new Map();
     const lecturas=[];
     for(const cancha of canchas){
-      lecturas.push(rutaDia(cancha.id,dia).get({source:'server'}).then(snap=>{
-        const usados=new Set(Object.keys(snap.data()?.ocupados??{}).map(Number));
-        ocupacion.set(cancha.id,usados);
+      lecturas.push(new Promise((resolve,reject)=>{
+        const cancelar=rutaDia(cancha.id,dia).onSnapshot({includeMetadataChanges:true},snap=>{
+          if(actual!==revision||dia!==$('dia').value)return;
+          if(snap.metadata.fromCache)return;
+          ocupacion.set(cancha.id,new Set(Object.keys(snap.data()?.ocupados??{}).map(Number)));
+          tarjetasCanchas();actualizarHoras();resolve();
+        },reject);suscripciones.push(cancelar);
       }));
     }
     await Promise.all(lecturas);
@@ -156,7 +172,7 @@ async function cargar(){
   }catch(error){mensaje(errorMensaje(error),'error');}
   finally{cargando=false;$('recargar').disabled=false;}
 }
-$('dia').value=hoyLima();$('dia').min=hoyLima();$('dia').max=siguienteDia(hoyLima(),179);
+$('dia').value=diaOperativoLima();$('dia').min=diaOperativoLima();$('dia').max=siguienteDia(hoyLima(),179);
 $('dia').addEventListener('change',()=>{revision++;cargando=false;cargar();});
 $('cancha').addEventListener('change',actualizarHoras);$('duracion').addEventListener('change',actualizarHoras);
 $('recargar').addEventListener('click',cargar);
@@ -189,4 +205,4 @@ $('reserva').addEventListener('submit',async event=>{
 aplicarEstadoReservas();
 await cargarConfiguracion();
 await cargar();
-setInterval(()=>{if(!document.hidden&&!enviando)cargar();},30000);
+// La ocupacion llega por listeners de Firestore, sin recargar la pagina.

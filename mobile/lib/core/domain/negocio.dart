@@ -104,20 +104,11 @@ bool esHorarioValido({
     apertura != cierre &&
     esDuracionValida(duracionTurno);
 
-/// Una cancha es reservable cuando esta habilitada y tiene direccion y tarifa.
-/// La web publica y las reglas usan exactamente esta misma definicion: sin
-/// esos dos datos la cancha no aparece ni acepta reservas, aunque el switch
-/// este encendido.
-bool esReservable(Registro cancha) =>
-    cancha.activo('activa') &&
-    cancha.texto('direccion').trim().isNotEmpty &&
-    esTarifaValida(cancha.datos['tarifaTurnoCentimos']);
+/// La habilitacion permite reservar; direccion y tarifa pueden quedar pendientes.
+bool esReservable(Registro cancha) => cancha.activo('activa');
 
-/// Que falta para que una canchaEnabled llegue a ser reservable.
 List<String> pendientesDeReserva(Registro cancha) => [
   if (!cancha.activo('activa')) 'habilitacion',
-  if (cancha.texto('direccion').trim().isEmpty) 'direccion',
-  if (!esTarifaValida(cancha.datos['tarifaTurnoCentimos'])) 'tarifa',
 ];
 
 bool cabeEnHorario({

@@ -121,13 +121,17 @@ const lote = MUTACIONES.slice(desde, hasta);
 const resultados = [];
 for (const [i, m] of lote.entries()) {
   const lineas = ORIGINAL.split('\n');
-  const linea = lineas[m.l - 1];
+  const start = lineas.findIndex(l => l.includes('function '+m.f+'('));
+  const next = lineas.findIndex((l,i) => i > start && /function [A-Za-z]/.test(l));
+  const end = next < 0 ? lineas.length : next;
+  const actual = lineas.findIndex((l,i) => i >= start && i < end && l.includes(m.buscar));
+  const linea = lineas[actual];
   if (linea === undefined || linea.indexOf(m.buscar) === -1) {
     resultados.push({ ...m, estado: 'no-encontrado' });
     process.stderr.write(`[${desde + i + 1}] ${m.f} L${m.l}: no encontre "${m.buscar}"\n`);
     continue;
   }
-  lineas[m.l - 1] = linea.replace(m.buscar, m.reemplazar);
+  lineas[actual] = linea.replace(m.buscar, m.reemplazar);
   writeFileSync(COPIA, lineas.join('\n'));
   const r = correrSuite();
   // Restaura la copia antes de la siguiente mutacion.
@@ -145,4 +149,5 @@ rmSync(COPIA, { force: true });
 writeFileSync(INFORME, JSON.stringify({ total: MUTACIONES.length, desde, hasta, resultados }, null, 2));
 const cuenta = (e) => resultados.filter((x) => x.estado === e).length;
 process.stderr.write(`LOTE ${desde + 1}-${hasta}: detectados=${cuenta('detectado')} `
-  + `sobreviven=${cuenta('sobrevive')} rotos=${cuenta('rompe')}\n`);
+  + `sobreviven=${cuenta('sobrevive')} rotos=${cuenta('rompe')} omitidos=${cuenta('no-encontrado')} ejecutados=${resultados.length}/${MUTACIONES.length}\n`);
+if(cuenta('no-encontrado')||cuenta('rompe'))process.exitCode=1;

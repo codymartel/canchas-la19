@@ -5,3 +5,5 @@ node_modules/
 !*.example
 *-service-account.json
 mobile/test/features/empleados/capturas/*.png
+
+.production-audit/

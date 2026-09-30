@@ -217,6 +217,15 @@ class ReservasRepository {
     });
   });
 
+  Future<bool> puedeAprobar(String cancha) async {
+    final doc = await servicios.doc(negocio, 'empleados', servicios.uid).get();
+    final d = doc.data();
+    return d?['activo'] == true &&
+        d?['rol'] == 'empleado_control' &&
+        (d?['permisos'] as Map?)?['reservas'] == true &&
+        (d?['sedes'] as List? ?? const []).contains(cancha);
+  }
+
   /// Confirma, cancela o marca no_asistio. Cancelar libera las franjas en la
   /// misma operacion atomica.
   Future<Resultado<void>> actualizar(

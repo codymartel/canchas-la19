@@ -125,8 +125,24 @@ void main() {
     });
   });
 
+  test('dia operativo tiene 36 franjas y madrugada del dia siguiente', () {
+    const h = HorarioNegocio(apertura: 420, cierre: 60, duracionTurno: 30);
+    final minutos = iniciosDeTurno(horario: h, duracion: 30);
+    expect(minutos.length, 36);
+    expect(minutos.first, 420);
+    expect(minutos.last, 1470);
+    expect(iniciosDeTurno(horario: h, duracion: 60), contains(1440));
+    expect(
+      inicioDe('2026-09-29', 1440),
+      DateTime.parse('2026-09-30T00:00:00-05:00'),
+    );
+    expect(
+      diaOperativoLima(DateTime.parse('2026-09-30T00:30:00-05:00')),
+      '2026-09-29',
+    );
+  });
   group('reservabilidad por cancha', () {
-    test('exige habilitacion, direccion y tarifa', () {
+    test('la habilitacion permite reservar', () {
       expect(
         esReservable(
           Registro('la-19', {
@@ -139,24 +155,24 @@ void main() {
       );
     });
 
-    test('sin direccion la cancha no es reservable aunque este habilitada', () {
+    test('direccion pendiente permite reservar', () {
       const cancha = Registro('la-19', {
         'activa': true,
         'direccion': '   ',
         'tarifaTurnoCentimos': 5000,
       });
-      expect(esReservable(cancha), isFalse);
-      expect(pendientesDeReserva(cancha), ['direccion']);
+      expect(esReservable(cancha), isTrue);
+      expect(pendientesDeReserva(cancha), isEmpty);
     });
 
-    test('sin tarifa la cancha no es reservable', () {
+    test('tarifa pendiente permite reservar', () {
       const cancha = Registro('la-19', {
         'activa': true,
         'direccion': 'Av. Siempre Viva 742',
         'tarifaTurnoCentimos': null,
       });
-      expect(esReservable(cancha), isFalse);
-      expect(pendientesDeReserva(cancha), ['tarifa']);
+      expect(esReservable(cancha), isTrue);
+      expect(pendientesDeReserva(cancha), isEmpty);
     });
 
     test('sin habilitacion quedan pendientes los tres datos', () {
@@ -166,11 +182,7 @@ void main() {
         'tarifaTurnoCentimos': null,
       });
       expect(esReservable(cancha), isFalse);
-      expect(pendientesDeReserva(cancha), [
-        'habilitacion',
-        'direccion',
-        'tarifa',
-      ]);
+      expect(pendientesDeReserva(cancha), ['habilitacion']);
     });
 
     test('la tarifa cero es valida porque no se debe a un campo vacio', () {
