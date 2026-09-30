@@ -15,6 +15,6 @@ if (['localhost','127.0.0.1'].includes(location.hostname)) {
 // La activacion en produccion es deliberada, despues de verificar reglas y panel.
 // Un origen local usa exclusivamente demo-grass-local y requiere ?reservas=1.
 const origenLocal = ['localhost', '127.0.0.1'].includes(location.hostname);
-const reservasProduccionHabilitadas = false;
-window.GRASS_RESERVAS_HABILITADAS = reservasProduccionHabilitadas
+const reservasProduccionHabilitadas = true;
+window.GRASS_RESERVAS_HABILITADAS = (!origenLocal && reservasProduccionHabilitadas)
   || (origenLocal && new URLSearchParams(location.search).get('reservas') === '1');
