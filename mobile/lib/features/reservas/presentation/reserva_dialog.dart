@@ -40,28 +40,19 @@ class _ReservaDialogState extends State<ReservaDialog> {
   int canchasNoReservables = 0;
   HorarioNegocio? horario;
   bool enviado = false, especial = false;
+  final seleccion = <int>{};
   Map<String, dynamic>? solicitud;
   StreamSubscription<HorarioNegocio?>? _subHorario;
 
   @override
   void initState() {
     super.initState();
+    widget.provider.addListener(actualizarDisponibilidad);
     _subHorario = widget.sedesProvider.horario.listen((valor) {
       if (!mounted || valor == null) return;
       setState(() {
         horario = valor;
-        if (duracion % valor.duracionTurno != 0 ||
-            !duracionesReserva.contains(duracion)) {
-          duracion = valor.duracionTurno;
-        }
-        // El horario puede cambiar en caliente (por ejemplo, el administrador
-        // acorta el dia o cambia el turno) y dejar el inicio ya elegido fuera de
-        // la lista. Sin reclamp, el DropdownButton receive un value que no
-        // existe entre sus items y revienta la pantalla.
-        final disponibles = iniciosDeTurno(horario: valor, duracion: duracion);
-        if (disponibles.isNotEmpty && !disponibles.contains(minuto)) {
-          minuto = disponibles.first;
-        }
+        seleccion.clear();
       });
     });
   }
@@ -92,12 +83,57 @@ class _ReservaDialogState extends State<ReservaDialog> {
         .toList();
   }
 
-  int get minutoPresencia => minuto % 1440;
-  String get diaPresencia => minuto < 1440
-      ? widget.provider.dia
-      : DateTime.parse(
-          widget.provider.dia,
-        ).add(const Duration(days: 1)).toIso8601String().substring(0, 10);
+  int get minutoPresencia => minuto;
+  String get diaPresencia => widget.provider.dia;
+
+  bool libre(int inicio) =>
+      minutosDe(minuto: inicio, duracion: duracionTurno).every(
+        (m) => !(widget.provider.ocupacionPorCancha[canchaId] ?? const <int>{})
+            .contains(int.parse(m)),
+      );
+
+  void actualizarDisponibilidad() {
+    if (!mounted || enviado) return;
+    setState(() {
+      if (seleccion.any((m) => !libre(m))) {
+        seleccion.clear();
+        widget.presencia.limpiar(requestId);
+      }
+    });
+  }
+
+  void marcar(int inicio, bool marcado) {
+    setState(() {
+      if (!marcado) {
+        if (inicio == seleccion.reduce((a, b) => a < b ? a : b) ||
+            inicio == seleccion.reduce((a, b) => a > b ? a : b)) {
+          seleccion.remove(inicio);
+        } else {
+          seleccion.clear();
+        }
+      } else {
+        if (seleccion.isNotEmpty &&
+            !seleccion.contains(inicio - duracionTurno) &&
+            !seleccion.contains(inicio + duracionTurno)) {
+          seleccion.clear();
+        }
+        if ((seleccion.length + 1) * duracionTurno >
+            (widget.bloqueo ? 180 : 600)) {
+          return;
+        }
+        seleccion.add(inicio);
+      }
+      if (seleccion.isNotEmpty) {
+        minuto = seleccion.reduce((a, b) => a < b ? a : b);
+        duracion = seleccion.length * duracionTurno;
+      }
+    });
+    if (seleccion.isEmpty) {
+      widget.presencia.limpiar(requestId);
+    } else {
+      publicar('preparando');
+    }
+  }
 
   Future<void> publicar(String estado) async {
     final cancha = canchaId;
@@ -114,6 +150,7 @@ class _ReservaDialogState extends State<ReservaDialog> {
 
   @override
   void dispose() {
+    widget.provider.removeListener(actualizarDisponibilidad);
     _subHorario?.cancel();
     nombre.dispose();
     telefono.dispose();
@@ -158,18 +195,15 @@ class _ReservaDialogState extends State<ReservaDialog> {
                 ? null
                 : (id) => setState(() {
                     canchaId = id;
-                    duracion = duracionTurno;
-                    if (!inicios.contains(minuto) && inicios.isNotEmpty) {
-                      minuto = inicios.first;
-                    }
-                    publicar('preparando');
+                    seleccion.clear();
+                    widget.presencia.limpiar(requestId);
                   }),
           );
         },
       ),
       if (horario != null)
         Text(
-          'Reservas de ${especial ? '30 minutos (caso especial)' : 'una hora'} · ${horario!.resumen}'
+          'Marca horarios consecutivos · ${especial ? '30 minutos (caso especial)' : 'una hora'}'
           '${horario!.cruzaMedianoche ? ' · continua despues de medianoche' : ''}',
         ),
       SwitchListTile(
@@ -182,10 +216,8 @@ class _ReservaDialogState extends State<ReservaDialog> {
             ? null
             : (valor) => setState(() {
                 especial = valor;
-                duracion = duracionTurno;
-                if (!inicios.contains(minuto) && inicios.isNotEmpty) {
-                  minuto = inicios.first;
-                }
+                seleccion.clear();
+                widget.presencia.limpiar(requestId);
               }),
       ),
       if (canchasNoReservables > 0)
@@ -193,53 +225,39 @@ class _ReservaDialogState extends State<ReservaDialog> {
           '$canchasNoReservables cancha(s) sin habilitacion: '
           'no se pueden reservar.',
         ),
-      if (inicios.isEmpty)
+      if (horario != null && canchaId != null) ...[
         const Text(
-          'Sin horarios libres en esta fecha con el turno configurado.',
-        )
-      else
-        DropdownButton<int>(
-          value: inicios.contains(minuto) ? minuto : null,
-          isExpanded: true,
-          items: inicios
-              .map(
-                (valor) => DropdownMenuItem(
-                  value: valor,
-                  child: Text('Inicio ${hora(valor)}'),
-                ),
-              )
-              .toList(),
-          onChanged: enviado
-              ? null
-              : (v) {
-                  setState(() => minuto = v!);
-                  publicar('preparando');
-                },
+          'Marca las franjas libres. Las ocupadas no se pueden seleccionar.',
         ),
-      DropdownButton<int>(
-        value: duraciones.contains(duracion) ? duracion : null,
-        isExpanded: true,
-        items: duraciones
-            .map(
-              (valor) => DropdownMenuItem(
-                value: valor,
-                child: Text(
-                  especial
-                      ? '$valor minutos'
-                      : '${valor ~/ 60} ${valor == 60 ? 'hora' : 'horas'}',
+        SizedBox(
+          height: 230,
+          child: ListView(
+            children: [
+              for (final inicio in iniciosDeTurno(
+                horario: horario!,
+                duracion: duracionTurno,
+              ).where((m) => (m - horario!.apertura) % duracionTurno == 0))
+                CheckboxListTile(
+                  key: ValueKey('franja-$inicio'),
+                  contentPadding: EdgeInsets.zero,
+                  controlAffinity: ListTileControlAffinity.leading,
+                  title: Text(
+                    '${hora(inicio)} – ${hora(inicio + duracionTurno)}',
+                  ),
+                  subtitle: Text(libre(inicio) ? 'Libre' : '✕ Ocupado'),
+                  value: seleccion.contains(inicio),
+                  onChanged: enviado || !libre(inicio)
+                      ? null
+                      : (v) => marcar(inicio, v!),
                 ),
-              ),
-            )
-            .toList(),
-        onChanged: enviado
-            ? null
-            : (v) => setState(() {
-                duracion = v!;
-                if (!inicios.contains(minuto) && inicios.isNotEmpty) {
-                  minuto = inicios.first;
-                }
-                publicar('preparando');
-              }),
+            ],
+          ),
+        ),
+      ],
+      Text(
+        seleccion.isEmpty
+            ? 'Selecciona un horario libre.'
+            : '${sedes[canchaId] ?? canchaId} · ${hora(minuto)} a ${hora(minuto + duracion)} · $duracion minutos',
       ),
       if (!widget.bloqueo && widget.puedeClientes)
         OutlinedButton(
@@ -273,7 +291,7 @@ class _ReservaDialogState extends State<ReservaDialog> {
         ),
       ),
       Text(
-        duracion > 180
+        seleccion.isNotEmpty && duracion > 180
             ? 'La solicitud quedara pendiente y no ocupara el horario hasta que el personal asignado la apruebe.'
             : 'El horario se asegura de forma atomica al guardar.',
       ),
@@ -294,9 +312,9 @@ class _ReservaDialogState extends State<ReservaDialog> {
             if (canchaId == null) {
               throw const FormatException('Elige una cancha habilitada.');
             }
-            if (!inicios.contains(minuto)) {
+            if (seleccion.isEmpty || !inicios.contains(minuto)) {
               throw const FormatException(
-                'Elige un inicio disponible dentro del turno configurado.',
+                'Marca horarios libres consecutivos dentro del horario operativo.',
               );
             }
             if (!widget.presencia.conectado) {

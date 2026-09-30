@@ -9,6 +9,7 @@ import 'package:mobile/features/reservas/domain/reserva.dart';
 import 'package:mobile/features/reservas/data/reservas_repository.dart';
 import 'package:mobile/features/reservas/presentation/agenda_provider.dart';
 import 'package:mobile/features/reservas/presentation/agenda_screen.dart';
+import 'package:mobile/features/reservas/presentation/reserva_dialog.dart';
 import 'package:mobile/features/sedes/data/sedes_repository.dart';
 import 'package:mobile/features/sedes/presentation/sedes_provider.dart';
 import 'package:mobile/features/clientes/data/clientes_repository.dart';
@@ -183,18 +184,115 @@ void main() {
       await tester.tap(find.text('Reserva'));
       await tester.pumpAndSettle();
       expect(find.text('Registrar reserva'), findsOneWidget);
-      expect(find.text('1 hora'), findsOneWidget);
+      expect(
+        find.textContaining('Marca horarios consecutivos · una hora'),
+        findsOneWidget,
+      );
+      expect(find.byType(DropdownButton<int>), findsNothing);
       expect(find.text('30 minutos'), findsNothing);
       await tester.ensureVisible(find.byType(SwitchListTile));
       await tester.tap(find.byType(SwitchListTile));
       await tester.pumpAndSettle();
-      expect(find.text('30 minutos'), findsOneWidget);
+      expect(find.textContaining('30 minutos (caso especial)'), findsOneWidget);
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox());
       sp.dispose();
       cp.dispose();
     });
   }
+  testWidgets(
+    'franjas consecutivas, conflicto en vivo y medianoche operativa',
+    (tester) async {
+      final sr = SedesRepo(), cr = ClientesRepo();
+      stubSedes(sr, canchas: const [canchaReservable]);
+      final sp = SedesProvider(sr), cp = ClientesProvider(cr);
+      final presencia = PresenciaFake();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ReservaDialog(
+              provider: provider,
+              sedesProvider: sp,
+              clientes: cp,
+              bloqueo: false,
+              presencia: presencia,
+              nombrePersonal: 'Ana',
+              puedeClientes: false,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byType(DropdownButton<String>));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('La 19 / Cancha 19').last);
+      await tester.pumpAndSettle();
+      for (final m in [420, 480, 540, 600, 660]) {
+        await tester.ensureVisible(find.byKey(ValueKey('franja-$m')));
+        await tester.tap(find.byKey(ValueKey('franja-$m')));
+        await tester.pumpAndSettle();
+      }
+      expect(find.text('La 19 · 07:00 a 12:00 · 300 minutos'), findsOneWidget);
+      expect(
+        find.textContaining('solicitud quedara pendiente'),
+        findsOneWidget,
+      );
+      provider.ocupacionPorCancha['la-19'] = {450};
+      provider.notificar();
+      await tester.pumpAndSettle();
+      expect(find.text('Selecciona un horario libre.'), findsOneWidget);
+      await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('franja-420')),
+        -200,
+        scrollable: find.descendant(
+          of: find.byType(ListView),
+          matching: find.byType(Scrollable),
+        ),
+      );
+      final ocupado = tester.widget<CheckboxListTile>(
+        find.byKey(const ValueKey('franja-420')),
+      );
+      expect(ocupado.onChanged, isNull);
+      await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('franja-1440')),
+        200,
+        scrollable: find.descendant(
+          of: find.byType(ListView),
+          matching: find.byType(Scrollable),
+        ),
+      );
+      await tester.tap(find.byKey(const ValueKey('franja-1440')));
+      await tester.pumpAndSettle();
+      expect(
+        find.text('La 19 · 00:00 (+1 dia) a 01:00 (+1 dia) · 60 minutos'),
+        findsOneWidget,
+      );
+      await tester.ensureVisible(find.byType(SwitchListTile));
+      await tester.tap(find.byType(SwitchListTile));
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('franja-1470')),
+        200,
+        scrollable: find.descendant(
+          of: find.byType(ListView),
+          matching: find.byType(Scrollable),
+        ),
+      );
+      await tester.ensureVisible(find.byKey(const ValueKey('franja-1470')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('franja-1470')));
+      await tester.pumpAndSettle();
+      expect(
+        find.text('La 19 · 00:30 (+1 dia) a 01:00 (+1 dia) · 30 minutos'),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+      sp.dispose();
+      cp.dispose();
+      presencia.dispose();
+    },
+  );
   testWidgets(
     'agenda representa reservas reales y no omite errores del stream',
     (tester) async {
