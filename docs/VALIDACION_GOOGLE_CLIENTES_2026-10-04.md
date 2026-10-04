@@ -1,6 +1,6 @@
 # Acceso con Google y clientes registrados — 4 de octubre de 2026
 
-Estado: implementado y probado localmente. No desplegado; Google está deshabilitado en Firebase Authentication del proyecto real.
+Estado actual: código conservado y probado localmente; publicación revertida por fallo de conexión del nuevo build del panel. El formulario público permanece cerrado. Google está habilitado, pero el nuevo flujo público no está activo.
 
 ## Comportamiento
 
@@ -32,7 +32,7 @@ Las ejecuciones iniciales mostraron el límite de expresiones en rechazos malici
 
 Los registros completos y respaldos quedan en .production-audit/, excluidos de Git; incluyen información privada y no deben publicarse.
 
-## Producción y bloqueo
+## Inventario y bloqueo inicial, antes de habilitar Google
 
 Inventario de solo lectura: las rutas clientesRegistrados y limitesPublicos contienen cero documentos. No se necesita transformar clientes ni reservas. Las cuatro reservas respaldadas siguen intactas y las versiones publicadas coinciden con el inventario anterior.
 
@@ -70,3 +70,25 @@ Firebase Console → Firestore Database → Uso muestra lecturas y escrituras ag
 - web/public/styles.css
 - web/test/app.test.js
 - docs/VALIDACION_GOOGLE_CLIENTES_2026-10-04.md
+
+## Intento de publicación y restauración — 4 de octubre, 06:37 UTC
+
+El propietario habilitó Google. Se verificó el proveedor habilitado con cliente OAuth existente. Se añadió exclusivamente glass-sintetico-tienda.web.app a authorizedDomains conservando todos los dominios anteriores. No se cambiaron credenciales ni el login privado, que continúa con correo y contraseña.
+
+La web pública se publicó primero cerrada: versión c05145746c64e113. Después se publicaron reglas f70820d8-13ce-4f11-8812-95227b4fcf1b y panel 38d0c45d5abb398e, con comandos limitados a hosting:publica y firestore:rules,hosting:personal. Se verificaron los hashes publicados y las cuatro reservas, dos clientes y un empleado intactos.
+
+La prueba visual real del nuevo panel mostró «Sin conexión» y «Coordinación en vivo: No se pudo completar la operacion. Reintenta. [minified:Dd]». El intento de reconexión volvió al mismo estado. Las pruebas de emulador anteriores pasan, pero no detectaron este fallo del build publicado. La causa exacta está pendiente de diagnóstico.
+
+Se ejecutó la restauración autorizada. Al recargar la versión anterior, el panel volvió a mostrar «Conectado en vivo». La publicación permanece detenida y no se abrió el formulario público.
+
+| Recurso final | Versión |
+| --- | --- |
+| Reglas Firestore restauradas | fa811305-185d-472b-9557-5681481df557 |
+| Panel personal restaurado | 683c539ee01f668f |
+| Web publica anterior con formulario cerrado | fde6808b8dc90e48 |
+
+La última versión pública contiene los archivos del commit ea674b6, con el único cambio operativo de cerrar el formulario. El código nuevo de Google se conserva localmente en 8b3dc4b4d7e8a285200277c56d6b7d3facb8f71b. Se deja también cerrado el indicador local de producción para evitar una apertura accidental en el próximo intento.
+
+La verificación posterior compara hashes del panel y la web restaurados, reglas activas, contenido de clientes y empleados, fichas registradas, controles públicos y updateTime de las cuatro reservas originales. Todo permanece intacto. No se creó ninguna reserva de prueba ni se hizo push. Google y el dominio público quedan configurados para el siguiente intento; la app privada y el panel conservan su acceso original.
+
+La prueba con una cuenta Google real y las métricas agregadas antes/después de una reserva en producción quedan pendientes porque el formulario no se habilitó. Los respaldos, versiones y captura del panel restaurado están en .production-audit/, excluidos de Git.
