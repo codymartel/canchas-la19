@@ -1,3 +1,4 @@
+import {reconstruirPrecios,calcularPrecio} from '../../../web/public/precios.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -21,6 +22,7 @@ import {
   writeBatch,
   runTransaction,
   onSnapshot,
+  serverTimestamp,
 } from 'firebase/firestore';
 import { solicitarReserva } from '../../../web/public/reserva.js';
 
@@ -139,6 +141,7 @@ const request = {
   duracion: 60,
   nombre: 'PRUEBA WEB EMULADOR',
   telefono: '+51900000000',
+  modalidad: 'adelanto',
 };
 const created = await solicitarReserva({
   firebase,
@@ -152,6 +155,9 @@ assert.equal(created.estado, 'confirmada');
 const staff = environment.authenticatedContext(EMPLOYEE, {
   firebase: { sign_in_provider: 'password' },
 }).firestore();
+const preferencia = await assertSucceeds(getDoc(doc(staff, `negocios/${BUSINESS}/preferenciasReservas/${created.id}`)));
+assert.equal(preferencia.data().modalidad, 'adelanto');
+await assertFails(getDoc(doc(environment.unauthenticatedContext().firestore(), `negocios/${BUSINESS}/preferenciasReservas/${created.id}`)));
 const panelQuery = query(
   collection(staff, `negocios/${BUSINESS}/reservas`),
   where('dia', '==', day),
@@ -258,6 +264,22 @@ await resolver(created.id,'cancelada');
 await esperar(()=>[...vistas.values()].every(v=>Object.keys(v).length===0)&&[...privadas.values()].every(v=>Object.keys(v).length===0));
 for(const stop of stops)stop();
 console.log('Integracion: listeners de tres canchas, carrera de dos sesiones, madrugada operativa, cinco horas, rechazo ajeno, revalidacion y cancelacion OK.');
+const preciosAdmin=environment.authenticatedContext('admin-panel-01',{email_verified:true,firebase:{sign_in_provider:'password'}}).firestore();
+const basePrecio='negocios/'+BUSINESS+'/parametrosCanchas/la-19/dias/'+day;
+const publicPrecio='precios_publicos/'+BUSINESS+'/canchas/la-19/dias/'+day+'/bloques';
+let preciosVista=null;
+const stopPrecios=onSnapshot(collection(environment.unauthenticatedContext().firestore(),publicPrecio), snap=>{preciosVista=reconstruirPrecios(snap.docs.map(d=>d.data()));});
+let antesPrecio={bloque:null,plazoMinutos:null};
+for(const [v,p] of [[1,5000],[2,7500]]){
+ const bloque={desde:420,hasta:540,precioCentimos:p,adelantoCentimos:1000};
+ const despues={bloque,plazoMinutos:10},batch=writeBatch(preciosAdmin),evt='tarifa-'+v;
+ batch.set(doc(preciosAdmin,basePrecio),{...despues,version:v,eventoId:evt,actualizadoPor:'admin-panel-01',actualizadoEn:serverTimestamp()});
+ batch.set(doc(preciosAdmin,basePrecio+'/historial/'+evt),{antes:antesPrecio,despues,version:v,actualizadoPor:'admin-panel-01',actualizadoEn:firebase.firestore.FieldValue.serverTimestamp()});
+ batch.set(doc(preciosAdmin,publicPrecio+'/'+evt),{...despues,version:v});
+ await assertSucceeds(batch.commit());await esperar(()=>preciosVista?.version===v);
+ assert.deepEqual(calcularPrecio(preciosVista,new Set([420,480])),{total:p*2,adelanto:2000,saldo:p*2-2000});antesPrecio=despues;
+}
+stopPrecios();console.log('Precios en tiempo real, cálculo por hora y preferencia de adelanto privada OK.');
 await auth.signOut();
 await secondAuth.signOut();
 await app.delete();

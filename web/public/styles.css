@@ -5,3 +5,14 @@ table{border-collapse:collapse;width:100%;font-size:.9rem}th,td{padding:.45rem;t
 .fecha-agenda{max-width:320px;margin-bottom:1.2rem}.hora-libre{flex-direction:row;align-items:center;gap:.6rem;cursor:pointer;min-height:44px}.hora-libre input{width:24px;min-height:24px;height:24px;accent-color:var(--verde)}.hora-ocupada{color:var(--error);font-weight:700}.hora-elegida{background:#dfedb8}.resumen-seleccion{grid-column:1/-1;padding:1rem;background:#edf5e7;border-left:4px solid var(--verde);font-weight:750}.hora-libre:has(input:disabled){cursor:default;opacity:.6}
 
 #precio,.aviso-pago{grid-column:1/-1}
+/* Superficies neutras y acentos de marca, sin teñir toda la página. */
+:root{--verde:#165c43;--lima:#d7e9de;--fondo:#f4f6f7;--papel:#ffffff;--texto:#172b24;--borde:#dce3df}
+header{min-height:220px;background:#fff;color:var(--texto);border-bottom:1px solid var(--borde)}
+.ceja{color:var(--verde)}.balon{color:#fff;background:#173e30;border-color:#173e30;box-shadow:none}
+section{border-color:var(--borde);box-shadow:0 5px 20px #16291f08}article{background:#fff;border:1px solid var(--borde);border-top:4px solid var(--verde);padding:1rem}
+article h3{margin-top:0;color:#173e30}th{background:#f3f5f4;color:#173e30}td{background:#fff}tr.hora-elegida td{background:#e9f3ed}
+.resumen-seleccion,#estado{background:#f4f7f5}.modalidad,#importe-elegido{grid-column:1/-1}#importe-elegido{margin-top:0;color:#465b51}
+button:hover:not(:disabled){background:#103f2e;color:#fff}input,select{border-color:#acbab2}table{table-layout:fixed}th:first-child{width:48%}
+@media(min-width:761px) and (max-width:1050px){.grid,.galeria{grid-template-columns:repeat(2,minmax(0,1fr))}.grid>article:last-child{grid-column:1/-1}}
+@media(max-width:480px){header{padding:1.8rem 1rem 3rem}h1{font-size:2.7rem}main{padding:.65rem}section{border-radius:.8rem}.fecha-agenda{max-width:none}fieldset{padding:.8rem}button{width:100%;margin-right:0}th,td{padding:.55rem .35rem}.hora-libre{gap:.35rem}footer{padding:1.5rem 1rem}}
+th:first-child{width:38%}th:nth-child(2){width:37%}th:nth-child(3){width:25%}td:last-child{font-variant-numeric:tabular-nums}caption{font-size:.85rem;color:#586a60}

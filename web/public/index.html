@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="Grass Sintético en Huánuco. Las canchas La 19, La 23 y La 24. Elige horas libres en La 19, La 23 y La 24."><title>Grass Sintético · Huánuco</title><link rel="stylesheet" href="styles.css?v=casillas-2"></head>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="Grass Sintético en Huánuco. Las canchas La 19, La 23 y La 24. Elige horas libres en La 19, La 23 y La 24."><title>Grass Sintético · Huánuco</title><link rel="stylesheet" href="styles.css?v=precios-responsive-1"></head>
 <body><header><div><p class="ceja">HUÁNUCO · RESERVAS EN LÍNEA</p><h1 id="marca">Grass Sintético</h1><p id="descripcion">Tres canchas, una agenda compartida.</p><p id="contacto"></p></div><span class="balon" aria-hidden="true">19 · 23 · 24</span></header><main>
   <section aria-labelledby="sedes-titulo"><h2 id="sedes-titulo">Elige tu horario</h2><p>Marca las horas libres de una cancha. Para reservar varias horas, deben ser consecutivas. <strong>✕ Ocupado</strong> no se puede seleccionar.</p><label class="fecha-agenda">Día operativo<input type="date" id="dia" required form="reserva"></label><div id="sedes" class="grid"><article><h3>La 19</h3></article><article><h3>La 23</h3></article><article><h3>La 24</h3></article></div></section>
   <section><h2>Reservas en línea</h2><p>Zona horaria de Huánuco (America/Lima).</p>
@@ -7,10 +7,10 @@
     <form id="reserva" hidden><fieldset id="campos"><legend>Horario y contacto</legend>
       <input type="hidden" id="cancha"><input type="hidden" id="minuto"><input type="hidden" id="duracion">
       <p id="seleccion" class="resumen-seleccion" aria-live="polite">Marca una hora libre en las tablas.</p>
-      <p id="precio" aria-live="polite"></p>
+      <p id="precio" aria-live="polite"></p><label class="modalidad">Preferencia de pago<select id="modalidad" disabled><option value="completo">Importe completo</option><option value="adelanto">Adelanto mínimo</option></select></label><p id="importe-elegido" aria-live="polite"></p>
       <label>Nombre completo<input id="nombre" autocomplete="name" maxlength="120" required></label>
       <label>Teléfono<input id="telefono" type="tel" autocomplete="tel" placeholder="+51 999 999 999" maxlength="24" required></label>
-      <p class="aviso-pago">El precio mostrado es referencial. Los pagos y comprobantes se coordinan fuera de este formulario.</p>
+      <p class="aviso-pago">Elige tu preferencia. Este formulario no cobra ni verifica pagos. La coordinación y el plazo automático se habilitarán en una próxima etapa.</p>
       <label class="consentimiento"><input type="checkbox" required> Acepto que el personal use mis datos para gestionar esta reserva y su historial.</label>
     </fieldset><button id="enviar" type="submit">Solicitar reserva</button><button id="nueva" type="button" hidden>Preparar otra solicitud</button></form>
     <p id="estado" role="status" aria-live="polite">Conectando…</p><button id="recargar" class="secundario" type="button">Actualizar disponibilidad</button>

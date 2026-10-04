@@ -1,3 +1,4 @@
+import {reconstruirPrecios,calcularPrecio} from './precios.js';
 import {conTiempoLimite} from './lectura.js';
 import {hora,soles,hoyLima,diaOperativoLima,iniciosDeTurno,siguienteDia,leerHorario,intervaloSeleccionado} from './disponibilidad.js';
 import {solicitarReserva} from './reserva.js';
@@ -16,7 +17,8 @@ if (['localhost','127.0.0.1'].includes(location.hostname)) {
 }
 
 let canchas = [], promociones = [], ocupacion = new Map(), horario = null;
-let suscripciones = [];
+let suscripciones = [], suscripcionesPrecios = [];
+let precios = new Map();
 let horasSeleccionadas = new Set(), diaCargado = null;
 let enviando = false, solicitud = null, cargando = false, revision = 0, completada = false;
 
@@ -43,6 +45,7 @@ function errorMensaje(error){
   if(error.code==='already-exists') return 'Ese horario acaba de ser ocupado. Actualiza y elige otro.';
   return error.message || 'No se pudo conectar. Intenta actualizar.';
 }
+$('modalidad').addEventListener('change',actualizarPrecio);
 function opcion(value,label){const o=document.createElement('option');o.value=value;o.textContent=label;return o;}
 function telefonoNormalizado(valor){
   let numero=valor.replace(/[\s()+.\-]/g,'');
@@ -73,14 +76,14 @@ function tarjetasCanchas(){
     const p=document.createElement('p');
     if(!cancha){p.textContent='Información pendiente de habilitación por el personal.';article.className='inactiva';}
     else{
-      const lineas=[cancha.direccion||'Dirección pendiente',Number.isInteger(cancha.tarifaTurnoCentimos)?`${soles(cancha.tarifaTurnoCentimos)} por turno`:'Tarifa pendiente'];
+      const lineas=[cancha.direccion||'Dirección pendiente','Precios según el horario elegido'];
       p.textContent=lineas.join('\n');
     }
     article.append(p);
     if(cancha&&horario){
       const table=document.createElement('table'),caption=document.createElement('caption');
       caption.textContent=`Día operativo ${$('dia').value} · 07:00 a 01:00 (+1 día) · America/Lima`;table.append(caption);
-      const head=document.createElement('tr');for(const label of ['Hora','Estado']){const th=document.createElement('th');th.textContent=label;head.append(th);}table.append(head);
+      const head=document.createElement('tr');for(const label of ['Hora','Estado','Precio']){const th=document.createElement('th');th.textContent=label;head.append(th);}table.append(head);
       const usados=ocupacion.get(id)??new Set();
       const disponibles=new Set(iniciosDeTurno(libresCancha(id,$('dia').value),60,horario.aperturaMinuto,60));
       for(let m=horario.aperturaMinuto;m<(horario.cierreMinuto>horario.aperturaMinuto?horario.cierreMinuto:1440+horario.cierreMinuto);m+=60){
@@ -97,7 +100,8 @@ function tarjetasCanchas(){
           check.addEventListener('change',()=>seleccionarHora(id,m,check.checked));texto.textContent='Libre';label.append(check,texto);estado.append(label);
           if(check.checked)row.className='hora-elegida';
         }else{estado.textContent=disponibles.has(m)?'✓ Libre':'✓ Libre · ya pasó';}
-        row.append(tiempo,estado);table.append(row);
+        const tarifa=document.createElement('td'),importe=precios.get(id)?.horas?.[m]?.precioCentimos;tarifa.textContent=Number.isInteger(importe)?soles(importe):'Pendiente';
+        row.append(tiempo,estado,tarifa);table.append(row);
       }
       article.append(table);
     }
@@ -140,11 +144,23 @@ function actualizarHoras(){
   actualizarPrecio();
 }
 function actualizarPrecio(){
-  const c=canchas.find(c=>c.id===$('cancha').value);
-  const turno=horario?.duracionTurnoMinutos,duracion=Number($('duracion').value);
-  $('precio').textContent=c&&!Number.isInteger(c.tarifaTurnoCentimos)?'Tarifa pendiente. No se solicita ni verifica un pago.':c&&turno&&duracion
-    ? `Referencial: ${soles(c.tarifaTurnoCentimos*duracion/turno)} por ${duracion} minutos. El personal confirma el precio total acordado.`
-    :'Marca una hora libre en las tablas.';
+  const parametros=precios.get($('cancha').value), calculo=calcularPrecio(parametros,horasSeleccionadas);
+  $('modalidad').disabled=!calculo || !!solicitud;
+  $('precio').textContent=!horasSeleccionadas.size ? 'Marca una hora libre en las tablas.' : !calculo
+    ? 'Precio pendiente de configurar para este horario. No se puede calcular el importe todavía.'
+    : 'Total: '+soles(calculo.total)+' · Adelanto mínimo: '+soles(calculo.adelanto)+' · Saldo con adelanto: '+soles(calculo.saldo);
+  $('importe-elegido').textContent=calculo ? ($('modalidad').value==='adelanto' ? 'Adelanto elegido: '+soles(calculo.adelanto) : 'Importe completo elegido: '+soles(calculo.total))+'. No se ha cobrado ni verificado ningún pago.' : '';
+}
+function observarPrecios(dia,actual){
+  for(const cancelar of suscripcionesPrecios)cancelar();suscripcionesPrecios=[];precios.clear();actualizarPrecio();
+  for(const id of Object.keys(nombres)){
+    const ref=db.collection('precios_publicos').doc(NEGOCIO).collection('canchas').doc(id).collection('dias').doc(dia).collection('bloques').orderBy('version');
+    suscripcionesPrecios.push(ref.onSnapshot(snap=>{
+      if(actual!==revision || dia!==$('dia').value)return;
+      try {precios.set(id,reconstruirPrecios(snap.docs.map(d=>d.data())));actualizarPrecio();tarjetasCanchas();}
+      catch(error){precios.delete(id);actualizarPrecio();tarjetasCanchas();mensaje(error.message,'error');}
+    },()=>{if(actual===revision){precios.delete(id);actualizarPrecio();mensaje('No se pudieron consultar los precios. Actualiza antes de continuar.','error');}}));
+  }
 }
 async function cargarConfiguracion(){
   const snap=await db.collection('negocios_publicos').doc(NEGOCIO).get({source:'server'});
@@ -184,7 +200,7 @@ async function cargar(){
     const dias=await conTiempoLimite(Promise.all(nuevas.map(c=>rutaDia(c.id,dia).get({source:'server'}))));
     if(actual!==revision||dia!==$('dia').value)return;
     for(const cancelar of suscripciones)cancelar();suscripciones=[];
-    diaCargado=dia;canchas=nuevas;promociones=promosSnap.docs.map(d=>({id:d.id,...d.data()}));
+    diaCargado=dia;observarPrecios(dia,actual);canchas=nuevas;promociones=promosSnap.docs.map(d=>({id:d.id,...d.data()}));
     ocupacion=new Map(canchas.map((c,i)=>[c.id,new Set(Object.keys(dias[i].data()?.ocupados??{}).map(Number))]));
     for(const cancha of canchas){
       const cancelar=rutaDia(cancha.id,dia).onSnapshot({includeMetadataChanges:true},snap=>{
@@ -218,7 +234,7 @@ $('reserva').addEventListener('submit',async event=>{
     if(!solicitud){
       actualizarHoras();
       if(!$('minuto').value||!$('duracion').value)throw new Error('Marca al menos una hora libre en las tablas.');
-      const payload={dia:$('dia').value,canchaId:$('cancha').value,minuto:Number($('minuto').value),duracion:Number($('duracion').value),nombre:$('nombre').value,telefono:telefonoNormalizado($('telefono').value)};
+      const payload={dia:$('dia').value,canchaId:$('cancha').value,minuto:Number($('minuto').value),duracion:Number($('duracion').value),nombre:$('nombre').value,telefono:telefonoNormalizado($('telefono').value),modalidad:calcularPrecio(precios.get($('cancha').value),horasSeleccionadas)?$('modalidad').value:null};
       const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(payload)));
       const clave='grass-'+Array.from(new Uint8Array(digest),b=>b.toString(16).padStart(2,'0')).join('');
       const requestId=sessionStorage.getItem(clave)||crypto.randomUUID();sessionStorage.setItem(clave,requestId);

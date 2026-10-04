@@ -72,7 +72,7 @@ void main() {
         cancha: 'la-23',
         dia: '2026-10-10',
         desde: 420,
-        hasta: 1500,
+        hasta: 480,
         precio: 5000,
         adelanto: 1500,
         plazo: 10,
@@ -138,4 +138,114 @@ void main() {
       expect((await ref.get()).data()!['version'], 2);
     },
   );
+  for (final cambios in [1, 20, 100]) {
+    test(
+      'precios bajos/medios/altos: $cambios cambios aislados por cancha y día',
+      () async {
+        final db = FakeFirebaseFirestore(), auth = Auth(), user = Usuario();
+        when(() => auth.currentUser).thenReturn(user);
+        when(() => user.uid).thenReturn('principal-local');
+        final repo = SedesRepository(
+          Servicios(db: db, auth: auth, authAltas: auth, realtime: Realtime()),
+          'grass-sintetico',
+        );
+        final esperado = <String, dynamic>{};
+        for (var v = 0; v < cambios; v++) {
+          final desde = v == 0 ? 420 : 420 + (v % 18) * 60;
+          final hasta = v == 0 ? 1500 : desde + 60;
+          final precio = [100, 5000, 100000][v % 3];
+          final adelanto = precio ~/ 5;
+          final resultado = await repo.guardarBloque(
+            cancha: 'la-23',
+            dia: '2026-10-10',
+            desde: desde,
+            hasta: hasta,
+            precio: precio,
+            adelanto: adelanto,
+            plazo: 10,
+            version: v,
+          );
+          expect(resultado.esError, false);
+          for (var hora = desde; hora < hasta; hora += 60) {
+            esperado['$hora'] = {
+              'precioCentimos': precio,
+              'adelantoCentimos': adelanto,
+            };
+          }
+        }
+        final actual = (await repo
+            .observarParametros('la-23', '2026-10-10')
+            .first)!;
+        expect(actual.datos['horas'], esperado);
+        expect((actual.datos['horas'] as Map).length, 18);
+        expect(actual.datos['version'], cambios);
+        expect(
+          await repo.observarParametros('la-19', '2026-10-10').first,
+          isNull,
+        );
+        expect(
+          await repo.observarParametros('la-24', '2026-10-10').first,
+          isNull,
+        );
+        expect(
+          await repo.observarParametros('la-23', '2026-10-11').first,
+          isNull,
+        );
+        final ref = repo.parametrosRef('la-23', '2026-10-10');
+        expect((await ref.collection('historial').get()).docs.length, cambios);
+        for (final limites in [
+          [480, 420],
+          [420, 420],
+          [360, 480],
+          [1440, 1560],
+          [450, 510],
+        ]) {
+          expect(
+            (await repo.guardarBloque(
+              cancha: 'la-23',
+              dia: '2026-10-10',
+              desde: limites[0],
+              hasta: limites[1],
+              precio: 5000,
+              adelanto: 1000,
+              plazo: 10,
+              version: cambios,
+            )).esError,
+            true,
+          );
+        }
+        expect((await ref.collection('historial').get()).docs.length, cambios);
+      },
+    );
+  }
+  for (final ancho in [360.0, 768.0, 1280.0]) {
+    testWidgets(
+      'formulario adaptable: una hora inicial y día completo explícito a $ancho',
+      (tester) async {
+        tester.view.physicalSize = Size(ancho, 800);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        final provider = SedesProvider(RepoParametros());
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: BloqueParametrosDialog(
+                provider: provider,
+                cancha: 'la-19',
+                dia: '2026-10-10',
+              ),
+            ),
+          ),
+        );
+        expect(find.text('Desde 07:00'), findsOneWidget);
+        expect(find.text('Hasta 08:00'), findsOneWidget);
+        await tester.tap(find.text('Aplicar a todo el día (18 horas)'));
+        await tester.pumpAndSettle();
+        expect(find.text('Hasta 01:00 (+1 dia)'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+        provider.dispose();
+      },
+    );
+  }
 }

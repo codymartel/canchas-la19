@@ -799,6 +799,29 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    match /precios_publicos/{n}/canchas/{cancha}/dias/{dia}/bloques/{evento} {
+      allow read: if n == 'grass-sintetico' && sedeValida(cancha);
+      allow create: if puede(n, 'reservas')
+        && request.resource.data.keys().hasOnly(['bloque','plazoMinutos','version'])
+        && request.resource.data == {
+          'bloque': getAfter(/databases/$(database)/documents/negocios/$(n)/parametrosCanchas/$(cancha)/dias/$(dia)/historial/$(evento)).data.despues.bloque,
+          'plazoMinutos': getAfter(/databases/$(database)/documents/negocios/$(n)/parametrosCanchas/$(cancha)/dias/$(dia)/historial/$(evento)).data.despues.plazoMinutos,
+          'version': getAfter(/databases/$(database)/documents/negocios/$(n)/parametrosCanchas/$(cancha)/dias/$(dia)/historial/$(evento)).data.version
+        }
+        && getAfter(/databases/$(database)/documents/negocios/$(n)/parametrosCanchas/$(cancha)/dias/$(dia)).data.eventoId == evento;
+      allow update, delete: if false;
+    }
+    match /negocios/{n}/preferenciasReservas/{id} {
+      allow read: if puede(n,'agenda');
+      allow create: if request.auth != null
+        && request.resource.data.keys().hasOnly(['modalidad','solicitanteUid','reservaId','creadoEn'])
+        && request.resource.data.modalidad in ['completo','adelanto']
+        && request.resource.data.solicitanteUid == request.auth.uid
+        && request.resource.data.reservaId == id && request.resource.data.creadoEn == request.time
+        && getAfter(/databases/$(database)/documents/negocios/$(n)/reservas/$(id)).data.solicitanteUid == request.auth.uid;
+      allow update, delete: if false;
+    }
+
     match /canchas_publicas/{id} {
       allow read: if resource.data.activa == true;
       allow create, update: if esAdministradorDe(request.resource.data.negocioId)

@@ -72,6 +72,11 @@ export async function solicitarReserva({ firebase, db, uid, negocio, datos }) {
       updatedAt: ahora,
       version: 1,
     });
+    if (['completo','adelanto'].includes(datos.modalidad)) {
+      tx.set(db.collection('negocios').doc(negocio).collection('preferenciasReservas').doc(id), {
+        modalidad: datos.modalidad, solicitanteUid: uid, reservaId: id, creadoEn: ahora,
+      });
+    }
     if (confirmada) {
       for (const minuto of minutos) ocupados[minuto] = true;
       tx.set(agendaRef, {

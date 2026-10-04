@@ -29,6 +29,7 @@ class _ParametrosScreenState extends State<ParametrosScreen> {
       final puede =
           widget.administrador || principal?.texto('empleadoUid') == widget.uid;
       return StreamBuilder<Registro?>(
+        key: ValueKey('$cancha/$dia'),
         stream: widget.provider.repository.observarParametros(cancha, dia),
         builder: (context, snapshot) {
           final datos = snapshot.data;
@@ -41,7 +42,7 @@ class _ParametrosScreenState extends State<ParametrosScreen> {
                 style: Theme.of(context).textTheme.headlineSmall,
               ),
               const Text(
-                'Configura por cancha y día operativo. El precio y adelanto se aplican a cada hora del bloque. Esta etapa guarda parámetros internos; todavía no cambia el cobro ni el formulario público.',
+                'Configura por cancha y día operativo. El precio y adelanto se aplican a cada hora del bloque. Los importes configurados se muestran en la web pública. Guardar no registra ningún pago.',
               ),
               Wrap(
                 spacing: 12,
@@ -180,7 +181,7 @@ class BloqueParametrosDialog extends StatefulWidget {
 }
 
 class _BloqueParametrosDialogState extends State<BloqueParametrosDialog> {
-  int desde = 420, hasta = 1500;
+  int desde = 420, hasta = 480;
   final precio = TextEditingController(), adelanto = TextEditingController();
   late final plazo = TextEditingController(
     text: '${widget.actual?.entero('plazoMinutos') ?? 10}',
@@ -217,19 +218,33 @@ class _BloqueParametrosDialogState extends State<BloqueParametrosDialog> {
                 ],
                 onChanged: widget.provider.ocupado
                     ? null
-                    : (v) => setState(() => desde = v!),
+                    : (v) => setState(() {
+                        desde = v!;
+                        if (hasta <= desde) hasta = desde + 60;
+                      }),
               ),
               DropdownButton<int>(
                 isExpanded: true,
                 value: hasta,
                 items: [
-                  for (var m = 480; m <= 1500; m += 60)
+                  for (var m = desde + 60; m <= 1500; m += 60)
                     DropdownMenuItem(value: m, child: Text('Hasta ${hora(m)}')),
                 ],
                 onChanged: widget.provider.ocupado
                     ? null
                     : (v) => setState(() => hasta = v!),
               ),
+              OutlinedButton.icon(
+                onPressed: widget.provider.ocupado
+                    ? null
+                    : () => setState(() {
+                        desde = 420;
+                        hasta = 1500;
+                      }),
+                icon: const Icon(Icons.select_all),
+                label: const Text('Aplicar a todo el día (18 horas)'),
+              ),
+              const SizedBox(height: 12),
               TextField(
                 controller: precio,
                 enabled: !widget.provider.ocupado,

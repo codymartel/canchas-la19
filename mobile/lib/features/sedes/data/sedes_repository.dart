@@ -105,6 +105,12 @@ class SedesRepository {
         'actualizadoPor': servicios.uid,
         'actualizadoEn': FieldValue.serverTimestamp(),
       });
+      tx.set(
+        servicios.db.doc(
+          'precios_publicos/$negocio/canchas/$cancha/dias/$dia/bloques/${evento.id}',
+        ),
+        {'bloque': bloque, 'plazoMinutos': plazo, 'version': version + 1},
+      );
       tx.set(ref, {
         ...despues,
         'version': version + 1,

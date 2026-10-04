@@ -235,3 +235,7 @@ El administrador puede designar un empleado activo, con permiso de reservas y la
 ### Parámetros privados por día y cancha
 
 `parametrosCanchas/{cancha}/dias/{dia}` guarda el último bloque ajustado, plazoMinutos, versión y evento de auditoría. Historial inmutable ordenado por versión permite reconstruir precios y adelantos de cada hora. Solo administrador o principal activo con reservas y cancha asignada puede escribir; personal de agenda consulta y público anónimo no lee. Cada cambio es transaccional con versión esperada y fecha de servidor; se conserva historial antes/después. Este diseño valida un bloque sin repetir 18 comprobaciones monetarias, evitando el límite de expresiones observado durante la prueba. Los parámetros no se integran todavía al formulario público ni al vencimiento de reservas.
+
+### Precios públicos y preferencias de pago (4 de octubre de 2026)
+
+Los nuevos ajustes de parámetros proyectan solo bloque, plazo y versión a `precios_publicos/{negocio}/canchas/{cancha}/dias/{dia}/bloques/{evento}`. La web reconstruye por versión y suma precios y adelantos por hora elegida; un dato faltante impide calcular, sin inventar tarifas. La preferencia completo/adelanto se conserva en `preferenciasReservas/{reservaId}` de forma privada, vinculada a la reserva y su solicitante. No acredita pago ni convierte el cálculo en un monto contable; las altas públicas conservan importes cero. Vencimiento, WhatsApp, Yape y Culqi siguen pendientes. Esta sección actualiza la descripción anterior que indicaba parámetros exclusivamente internos.

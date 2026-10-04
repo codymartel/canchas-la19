@@ -120,7 +120,27 @@ class _GrassAppState extends State<GrassApp> {
     debugShowCheckedModeBanner: false,
     theme: ThemeData(
       useMaterial3: true,
-      colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xff117448)),
+      colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xff165c43))
+          .copyWith(
+            primary: const Color(0xff165c43),
+            surface: Colors.white,
+            surfaceContainerLowest: Colors.white,
+            surfaceContainerLow: const Color(0xfff5f7f6),
+            surfaceContainer: const Color(0xffeef2f0),
+          ),
+      dialogTheme: const DialogThemeData(
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.transparent,
+      ),
+      scaffoldBackgroundColor: const Color(0xfff5f7f6),
+      appBarTheme: const AppBarTheme(
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.transparent,
+      ),
+      cardTheme: const CardThemeData(
+        color: Colors.white,
+        surfaceTintColor: Colors.transparent,
+      ),
       inputDecorationTheme: const InputDecorationTheme(
         border: OutlineInputBorder(),
       ),

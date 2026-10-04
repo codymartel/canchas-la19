@@ -1963,6 +1963,23 @@ test('parámetros: límites de precio, adelanto, plazo, bloque y auditoría', as
  await assertFails(guardar({...correcto,precioCentimos:0},10));await assertFails(guardar({...correcto,adelantoCentimos:1500},10));await assertFails(guardar({...correcto,adelantoCentimos:-1},10));await assertFails(guardar({...correcto,desde:450},10));await assertFails(guardar({...correcto,hasta:1560},10));await assertFails(guardar(correcto,0));await assertFails(guardar(correcto,121));await assertFails(guardar(correcto,10,{bloque:null,plazoMinutos:99}));await assertSucceeds(guardar(correcto,10));
 });
 
+test('precios públicos: proyección exacta sin datos privados', async () => {
+ await seedApplication();
+ const db=verified(ADMIN).firestore(),base='negocios/'+BUSINESS+'/parametrosCanchas/'+COURT+'/dias/2026-10-10';
+ const publico='precios_publicos/'+BUSINESS+'/canchas/'+COURT+'/dias/2026-10-10/bloques/precio';
+ const bloque={desde:420,hasta:480,precioCentimos:5000,adelantoCentimos:1000},despues={bloque,plazoMinutos:10},b=writeBatch(db);
+ b.set(doc(db,base),{...despues,version:1,eventoId:'precio',actualizadoPor:ADMIN,actualizadoEn:serverTimestamp()});
+ b.set(doc(db,base+'/historial/precio'),{antes:{bloque:null,plazoMinutos:null},despues,version:1,actualizadoPor:ADMIN,actualizadoEn:serverTimestamp()});
+ b.set(doc(db,publico),{...despues,version:1});await assertSucceeds(b.commit());
+ const anon=anonymous(ANON_A).firestore(),visto=await assertSucceeds(getDoc(doc(anon,publico)));
+ if(Object.keys(visto.data()).sort().join(',')!=='bloque,plazoMinutos,version')throw new Error('Privacidad');
+ await assertFails(setDoc(doc(anon,publico+'-falso'),{...despues,version:2}));
+ await assertFails(updateDoc(doc(db,publico),{plazoMinutos:15}));
+ await assertFails(setDoc(doc(db,publico+'-falso'),{...despues,version:2,actualizadoPor:ADMIN}));
+ await assertFails(getDoc(doc(anon,base+'/historial/precio')));
+ await assertFails(setDoc(doc(anon,'negocios/'+BUSINESS+'/preferenciasReservas/inexistente'),{modalidad:'adelanto',solicitanteUid:ANON_A,reservaId:'inexistente',creadoEn:serverTimestamp()}));
+});
+
 let failures = 0;
 let skipped = 0;
 for (const [name, run, motivo] of tests) {

@@ -1,0 +1,23 @@
+# Precios públicos y diseño adaptable — 4 de octubre de 2026
+
+El panel empieza con una sola hora (07:00–08:00). El final se limita a horas posteriores al inicio; cambiar el inicio corrige un final inválido. Aplicar a todo el día (18 horas) es una acción explícita. El cambio de cancha o fecha reinicia el estado de sus parámetros. Se conserva horario operativo 07:00–01:00(+1), America/Lima.
+
+Cada guardado nuevo escribe en la misma transacción el parámetro privado, su historial y una copia pública en precios_publicos/{negocio}/canchas/{cancha}/dias/{dia}/bloques/{evento}. La copia contiene exclusivamente bloque monetario, plazo y versión, sin nombre, teléfono, UID ni fecha de autor. Las reglas exigen igualdad con el evento privado y el evento actual del día. La copia es inmutable. Las reglas de reservas y solapamiento se conservan.
+
+La web escucha los precios de las tres canchas para el día operativo seleccionado. Muestra precio por hora y suma las horas elegidas para total, adelanto mínimo y saldo. Si falta alguna tarifa, el cálculo queda pendiente: no usa cero ni tarifas heredadas como sustitutos. La reserva simple continúa disponible sin precio configurado, como se autorizó anteriormente. Cuando hay cálculo completo permite elegir Importe completo o Adelanto mínimo.
+
+La preferencia se guarda en negocios/{negocio}/preferenciasReservas/{reservaId}, vinculada al solicitante y a una reserva existente en la misma transacción; solo personal de agenda la consulta. No es prueba de pago ni fija el monto contable. Los importes de alta pública continúan en cero, el empleado puede registrar posteriormente el importe acordado en el flujo interno autorizado. No hay cobro, WhatsApp, Yape, Culqi ni contador automático en esta etapa.
+
+Diseño: blanco para superficies, gris neutro para fondo, verde oscuro para acciones y acentos; estados con tonos suaves. Panel con navegación adaptable existente, formulario probado a 360, 768 y 1280 píxeles. Web con tres columnas en escritorio, dos en tablet y una en móvil; campos y botones adaptados al ancho.
+
+Validación: flutter analyze sin incidencias; 51 pruebas Flutter aprobadas; 81 pruebas de reglas aprobadas, sin 1.000 expresiones; tres pruebas unitarias JS de precios aprobadas. Integración demo-grass-local: precios en vivo desde otra sesión, cálculo por hora, preferencia privada; tres canchas, carrera concurrente, madrugada, solicitud de cinco horas, aprobación por empleado autorizado, revalidación y cancelación. No se crearon reservas de producción durante esta etapa.
+
+Inventario real: un día de La 19 (2026-10-03), versión 1, precio S/ 60 por hora y adelanto S/ 10 por hora, configurado previamente por el usuario. Respaldo privado .production-audit/precios-reales-antes.json. Se prepara su copia pública exacta; el registro privado y su historial se conservan. No se inventan precios para las otras canchas ni fechas.
+
+Publicación completada, únicamente firestore:rules, hosting:personal y hosting:publica. Reglas a1b22b7d-6e4d-4f05-b1b0-918f0a50fe27. Panel versión 8d194212e7fe3fe0, https://glass-sintetico.web.app/. Web versión 9cce7afc28c3a63f, https://glass-sintetico-tienda.web.app/. SHA-256 del panel: 5ad24ddef55c5352cca14fcb811c34382098e7195403451ddd8cc9c33d9b3d66.
+
+Comprobación posterior: todos los archivos servidos corresponden a las fuentes locales; cuatro reservas originales sin cambios de updateTime ni estado, clientes y empleado intactos. Una copia pública exacta del evento real creado; parámetro privado e historial sin modificaciones. No hubo reservas de prueba, cobros ni asignaciones nuevas en producción. La web permanece habilitada y su disponibilidad conserva el flujo anterior.
+
+Comprobación visual en producción: precio S/ 60 en La 19 y Pendiente en otras canchas; columnas 3/2/1 a 1280/768/360 píxeles, sin desbordamiento horizontal. Seleccionar una hora de una fecha sin precio deja el cálculo pendiente y la preferencia desactivada; la reserva simple sigue habilitada. No se envió esa selección. El formulario del panel inicia con 07:00–08:00 y muestra el botón explícito Todo el día. Evidencia privada en .production-audit/precios-publica-escritorio.png, precios-publica-movil.png y precios-panel-final.png. No se hizo push.
+
+Archivos modificados: mobile/firestore.rules, mobile/lib/main.dart, mobile/lib/features/sedes/data/sedes_repository.dart, mobile/lib/features/sedes/presentation/parametros_screen.dart, mobile/test/parametros_test.dart, tools/firebase/test/firestore.rules.test.mjs, tools/firebase/test/web-flow.test.mjs, tools/firebase/test/precios.test.mjs, web/public/app.js, web/public/precios.js, web/public/reserva.js, web/public/index.html, web/public/styles.css, docs/ARQUITECTURA_SPARK.md y este informe.
