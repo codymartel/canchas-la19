@@ -231,3 +231,7 @@ El documento publico admite una reescritura identica: si el mapa enviado coincid
 ### Empleado principal por cancha
 
 El administrador puede designar un empleado activo, con permiso de reservas y la cancha incluida en sus sedes, en `negocios/{negocio}/responsablesCanchas/{cancha}`. Este documento privado guarda `empleadoUid`, `actualizadoPor`, `actualizadoEn` y `eventoId`. Cada cambio crea un evento inmutable en `historial/{eventoId}` con empleado anterior y nuevo. Responsable y evento se escriben en la misma transacción y se validan con `getAfter`; no hay asignaciones automáticas ni migración de reservas. La designación prepara el enrutamiento futuro; no cambia los permisos operativos existentes ni activa WhatsApp o pagos.
+
+### Parámetros privados por día y cancha
+
+`parametrosCanchas/{cancha}/dias/{dia}` guarda el último bloque ajustado, plazoMinutos, versión y evento de auditoría. Historial inmutable ordenado por versión permite reconstruir precios y adelantos de cada hora. Solo administrador o principal activo con reservas y cancha asignada puede escribir; personal de agenda consulta y público anónimo no lee. Cada cambio es transaccional con versión esperada y fecha de servidor; se conserva historial antes/después. Este diseño valida un bloque sin repetir 18 comprobaciones monetarias, evitando el límite de expresiones observado durante la prueba. Los parámetros no se integran todavía al formulario público ni al vencimiento de reservas.

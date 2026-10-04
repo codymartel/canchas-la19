@@ -7,6 +7,7 @@ import '../../reservas/presentation/agenda_provider.dart';
 import '../../reservas/presentation/agenda_screen.dart';
 import '../../sedes/presentation/sedes_provider.dart';
 import '../../sedes/presentation/sedes_screen.dart';
+import '../../sedes/presentation/parametros_screen.dart';
 import '../../clientes/presentation/clientes_provider.dart';
 import '../../clientes/presentation/clientes_screen.dart';
 import '../../empleados/presentation/empleados_provider.dart';
@@ -75,6 +76,15 @@ class _PanelScreenState extends State<PanelScreen> {
         pantalla: PromocionesScreen(
           provider: widget.promociones,
           puedeEditar: s.permite('promociones'),
+        ),
+      ),
+      (
+        titulo: 'Precios y adelantos',
+        icono: Icons.price_change,
+        pantalla: ParametrosScreen(
+          provider: widget.sedes,
+          uid: s.uid!,
+          administrador: s.administrador,
         ),
       ),
       if (s.administrador)

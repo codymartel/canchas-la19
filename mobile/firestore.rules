@@ -604,6 +604,46 @@ service cloud.firestore {
         allow delete: if false;
       }
 
+      match /parametrosCanchas/{cancha}/dias/{dia} {
+        function puedeConfigurar() {
+          return esAdministradorDe(n) || (empleadoAsignado(n, cancha)
+            && get(/databases/$(database)/documents/negocios/$(n)/responsablesCanchas/$(cancha)).data.empleadoUid == request.auth.uid);
+        }
+        function valoresValidos(d) {
+          let b = d.bloque;
+          return sedeValida(cancha) && dia.matches('^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$')
+            && d.keys().hasAll(['bloque','plazoMinutos','version','eventoId','actualizadoPor','actualizadoEn'])
+            && d.keys().hasOnly(['bloque','plazoMinutos','version','eventoId','actualizadoPor','actualizadoEn'])
+            && b is map && b.keys().hasOnly(['desde','hasta','precioCentimos','adelantoCentimos'])
+            && b.desde is int && b.hasta is int && b.desde >= 420 && b.hasta <= 1500 && b.desde < b.hasta
+            && (b.desde-420)%60 == 0 && (b.hasta-420)%60 == 0
+            && b.precioCentimos is int && b.precioCentimos > 0 && b.precioCentimos <= 100000000
+            && b.adelantoCentimos is int && b.adelantoCentimos >= 0 && b.adelantoCentimos <= b.precioCentimos
+            && d.plazoMinutos is int && d.plazoMinutos >= 1 && d.plazoMinutos <= 120
+            && d.version is int && d.version == (exists(/databases/$(database)/documents/negocios/$(n)/parametrosCanchas/$(cancha)/dias/$(dia)) ? resource.data.version + 1 : 1)
+            && d.eventoId is string && d.actualizadoPor == request.auth.uid && d.actualizadoEn == request.time;
+        }
+        function auditado(d) {
+          let h = getAfter(/databases/$(database)/documents/negocios/$(n)/parametrosCanchas/$(cancha)/dias/$(dia)/historial/$(d.eventoId)).data;
+          return h.despues == {'bloque':d.bloque,'plazoMinutos':d.plazoMinutos} && h.version == d.version && h.actualizadoEn == request.time && h.actualizadoPor == request.auth.uid;
+        }
+        allow read: if puede(n,'agenda');
+        allow create, update: if puedeConfigurar() && valoresValidos(request.resource.data) && auditado(request.resource.data);
+        allow delete: if false;
+        match /historial/{evento} {
+          allow read: if puede(n,'agenda');
+          allow create: if puedeConfigurar()
+            && request.resource.data.keys().hasAll(['antes','despues','version','actualizadoPor','actualizadoEn'])
+            && request.resource.data.keys().hasOnly(['antes','despues','version','actualizadoPor','actualizadoEn'])
+            && request.resource.data.antes == (exists(/databases/$(database)/documents/negocios/$(n)/parametrosCanchas/$(cancha)/dias/$(dia)) ? {'bloque':get(/databases/$(database)/documents/negocios/$(n)/parametrosCanchas/$(cancha)/dias/$(dia)).data.bloque,'plazoMinutos':get(/databases/$(database)/documents/negocios/$(n)/parametrosCanchas/$(cancha)/dias/$(dia)).data.plazoMinutos} : {'bloque':null,'plazoMinutos':null})
+            && request.resource.data.actualizadoPor == request.auth.uid && request.resource.data.actualizadoEn == request.time
+            && getAfter(/databases/$(database)/documents/negocios/$(n)/parametrosCanchas/$(cancha)/dias/$(dia)).data.eventoId == evento
+            && request.resource.data.version == getAfter(/databases/$(database)/documents/negocios/$(n)/parametrosCanchas/$(cancha)/dias/$(dia)).data.version
+            && request.resource.data.despues == {'bloque':getAfter(/databases/$(database)/documents/negocios/$(n)/parametrosCanchas/$(cancha)/dias/$(dia)).data.bloque,'plazoMinutos':getAfter(/databases/$(database)/documents/negocios/$(n)/parametrosCanchas/$(cancha)/dias/$(dia)).data.plazoMinutos};
+          allow update, delete: if false;
+        }
+      }
+
       match /responsablesCanchas/{cancha} {
         function asignacionValida() {
           let d = request.resource.data;

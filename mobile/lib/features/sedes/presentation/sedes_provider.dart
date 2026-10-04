@@ -10,6 +10,27 @@ class SedesProvider extends Operacion {
   /// Horario y duracion base del turno, comunes a las tres canchas.
   Stream<HorarioNegocio?> get horario => repository.observarHorario();
   SedesProvider(this.repository);
+  Future<bool> guardarBloque({
+    required String cancha,
+    required String dia,
+    required int desde,
+    required int hasta,
+    required int precio,
+    required int adelanto,
+    required int plazo,
+    required int version,
+  }) => conResultado(
+    () => repository.guardarBloque(
+      cancha: cancha,
+      dia: dia,
+      desde: desde,
+      hasta: hasta,
+      precio: precio,
+      adelanto: adelanto,
+      plazo: plazo,
+      version: version,
+    ),
+  );
   Future<bool> guardar(Map<String, dynamic> datos) =>
       conResultado(() => repository.guardar(datos));
 }

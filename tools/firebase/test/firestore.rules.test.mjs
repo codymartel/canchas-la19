@@ -1937,6 +1937,32 @@ test('principal: solo administrador, empleado elegible e historial inmutable', a
   await assertFails(asignar(db,EMPLOYEE,'falso-anterior','otro'));
 });
 
+
+
+test('parámetros: administrador, principal exclusivo, privacidad y auditoría', async () => {
+ await seedApplication();await environment.withSecurityRulesDisabled(async c=>{await setDoc(doc(c.firestore(),'negocios/'+BUSINESS+'/responsablesCanchas/'+COURT),{empleadoUid:EMPLOYEE});});
+ const base='negocios/'+BUSINESS+'/parametrosCanchas/'+COURT+'/dias/2026-10-10';
+ const bloque={desde:420,hasta:1500,precioCentimos:5000,adelantoCentimos:1000};
+ async function guardar(db,uid,id,version,antes,bl=bloque,plazo=10){const b=writeBatch(db),despues={bloque:bl,plazoMinutos:plazo};b.set(doc(db,base),{...despues,version,eventoId:id,actualizadoPor:uid,actualizadoEn:serverTimestamp()});b.set(doc(db,base+'/historial/'+id),{antes,despues,version,actualizadoPor:uid,actualizadoEn:serverTimestamp()});return b.commit();}
+ const vacio={bloque:null,plazoMinutos:null};
+ await assertFails(guardar(verified(NO_RESERVATIONS).firestore(),NO_RESERVATIONS,'no-permiso',1,vacio));
+ await assertFails(guardar(anonymous(ANON_A).firestore(),ANON_A,'publico',1,vacio));
+ await assertSucceeds(guardar(verified(EMPLOYEE).firestore(),EMPLOYEE,'principal',1,vacio));
+ await assertSucceeds(guardar(verified(ADMIN).firestore(),ADMIN,'admin',2,{bloque,plazoMinutos:10},bloque,15));
+ await assertFails(getDoc(doc(anonymous(ANON_A).firestore(),base)));
+ await assertFails(getDoc(doc(anonymous(ANON_A).firestore(),base+'/historial/admin')));
+ await assertFails(deleteDoc(doc(verified(ADMIN).firestore(),base+'/historial/admin')));
+ await assertFails(updateDoc(doc(verified(ADMIN).firestore(),base),{plazoMinutos:20}));
+ await environment.withSecurityRulesDisabled(async c=>{await updateDoc(doc(c.firestore(),'negocios/'+BUSINESS+'/responsablesCanchas/'+COURT),{empleadoUid:'otro'});});
+ await assertFails(guardar(verified(EMPLOYEE).firestore(),EMPLOYEE,'ex-principal',3,{bloque,plazoMinutos:15}));
+});
+test('parámetros: límites de precio, adelanto, plazo, bloque y auditoría', async () => {
+ await seedApplication();const db=verified(ADMIN).firestore(),base='negocios/'+BUSINESS+'/parametrosCanchas/'+COURT+'/dias/2026-10-10';
+ const correcto={desde:1440,hasta:1500,precioCentimos:1000,adelantoCentimos:100};
+ async function guardar(bl,plazo,antes={bloque:null,plazoMinutos:null}){const b=writeBatch(db),despues={bloque:bl,plazoMinutos:plazo};b.set(doc(db,base),{...despues,version:1,eventoId:'test',actualizadoPor:ADMIN,actualizadoEn:serverTimestamp()});b.set(doc(db,base+'/historial/test'),{antes,despues,version:1,actualizadoPor:ADMIN,actualizadoEn:serverTimestamp()});return b.commit();}
+ await assertFails(guardar({...correcto,precioCentimos:0},10));await assertFails(guardar({...correcto,adelantoCentimos:1500},10));await assertFails(guardar({...correcto,adelantoCentimos:-1},10));await assertFails(guardar({...correcto,desde:450},10));await assertFails(guardar({...correcto,hasta:1560},10));await assertFails(guardar(correcto,0));await assertFails(guardar(correcto,121));await assertFails(guardar(correcto,10,{bloque:null,plazoMinutos:99}));await assertSucceeds(guardar(correcto,10));
+});
+
 let failures = 0;
 let skipped = 0;
 for (const [name, run, motivo] of tests) {
