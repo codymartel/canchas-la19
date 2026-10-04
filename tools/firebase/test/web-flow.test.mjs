@@ -1,3 +1,4 @@
+import {registrarCliente} from '../../../web/public/acceso.js';
 import {reconstruirPrecios,calcularPrecio} from '../../../web/public/precios.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -111,7 +112,8 @@ const auth = app.auth();
 auth.useEmulator('http://127.0.0.1:9099');
 const db = app.firestore();
 db.useEmulator('127.0.0.1', 8081);
-await auth.signInAnonymously();
+await auth.signInWithCredential(firebase.auth.GoogleAuthProvider.credential(JSON.stringify({sub:'google-primero',email:'primero@test.local',email_verified:true,name:'Cliente local'})));
+await registrarCliente(firebase,db,BUSINESS,auth.currentUser);
 const uid = auth.currentUser.uid;
 
 const publicCourts = await db.collection('canchas_publicas')
@@ -151,6 +153,12 @@ const created = await solicitarReserva({
   datos: request,
 });
 assert.equal(created.estado, 'confirmada');
+const fichaAntes=(await db.doc('negocios/'+BUSINESS+'/clientesRegistrados/'+uid).get()).data();
+assert.equal(fichaAntes.nombre,request.nombre);assert.equal(fichaAntes.telefono,request.telefono);
+assert.equal((await solicitarReserva({firebase,db,uid,negocio:BUSINESS,datos:request})).id,created.id);
+assert.equal((await db.doc('negocios/'+BUSINESS+'/clientesRegistrados/'+uid).get()).data().actualizadoEn.toMillis(),fichaAntes.actualizadoEn.toMillis());
+await assert.rejects(solicitarReserva({firebase,db,uid,negocio:BUSINESS,datos:{...request,requestId:'cuenta-segunda',canchaId:'la-24',duracion:300}}));
+
 
 const staff = environment.authenticatedContext(EMPLOYEE, {
   firebase: { sign_in_provider: 'password' },
@@ -186,7 +194,9 @@ const secondAuth = secondApp.auth();
 secondAuth.useEmulator('http://127.0.0.1:9099');
 const secondDb = secondApp.firestore();
 secondDb.useEmulator('127.0.0.1', 8081);
-await secondAuth.signInAnonymously();
+await assert.rejects(secondDb.doc('negocios/'+BUSINESS+'/clientesRegistrados/'+uid).get(),e=>e.code==='permission-denied');
+await secondAuth.signInWithCredential(firebase.auth.GoogleAuthProvider.credential(JSON.stringify({sub:'google-segundo',email:'segundo@test.local',email_verified:true,name:'Segundo local'})));
+await registrarCliente(firebase,secondDb,BUSINESS,secondAuth.currentUser);
 await assert.rejects(
   solicitarReserva({
     firebase,
@@ -237,7 +247,17 @@ async function resolver(id,estado){
     tx.set(pub,{ocupados});
   });
 }
-const reservar=(datos,database=db,identidad=uid)=>solicitarReserva({firebase,db:database,uid:identidad,negocio:BUSINESS,datos:{...request,...datos}});
+const extraApps=[];
+async function reservar(datos,database=null,identidad=null){
+ if(!database){
+  const n='independiente-'+extraApps.length;
+  const a=firebase.initializeApp({apiKey:'demo-key',projectId:PROJECT,authDomain:PROJECT+'.firebaseapp.com'},n);extraApps.push(a);
+  a.auth().useEmulator('http://127.0.0.1:9099');database=a.firestore();database.useEmulator('127.0.0.1',8081);
+  await a.auth().signInWithCredential(firebase.auth.GoogleAuthProvider.credential(JSON.stringify({sub:n,email:n+'@test.local',email_verified:true,name:'Cliente local'})));
+  identidad=a.auth().currentUser.uid;await registrarCliente(firebase,database,BUSINESS,a.auth().currentUser);
+ }
+ return solicitarReserva({firebase,db:database,uid:identidad,negocio:BUSINESS,datos:{...request,...datos}});
+}
 const nocturnas=[];
 for(const court of ['la-19','la-23','la-24']){
  const r=await reservar({requestId:'nocturna-'+court,canchaId:court,minuto:1440,duracion:60});nocturnas.push(r.id);
@@ -282,6 +302,7 @@ for(const [v,p] of [[1,5000],[2,7500]]){
 stopPrecios();console.log('Precios en tiempo real, cálculo por hora y preferencia de adelanto privada OK.');
 await auth.signOut();
 await secondAuth.signOut();
+for(const a of extraApps){await a.auth().signOut();await a.delete();}
 await app.delete();
 await secondApp.delete();
 await environment.cleanup();

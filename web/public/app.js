@@ -1,3 +1,4 @@
+import {configurarAcceso} from './acceso.js';
 import {reconstruirPrecios,calcularPrecio} from './precios.js';
 import {conTiempoLimite} from './lectura.js';
 import {hora,soles,hoyLima,diaOperativoLima,iniciosDeTurno,siguienteDia,leerHorario,intervaloSeleccionado} from './disponibilidad.js';
@@ -190,7 +191,7 @@ async function cargar(){
   $('recargar').disabled=true;tarjetasCanchas();
   if(!solicitud)mensaje('Consultando el servidor…');
   try{
-    if(RESERVAS&&!auth.currentUser)await conTiempoLimite(auth.signInAnonymously());
+
     if(!horario)await conTiempoLimite(cargarConfiguracion());
     const [canchasSnap,promosSnap]=await conTiempoLimite(Promise.all([
       db.collection('canchas_publicas').where('activa','==',true).get({source:'server'}),
@@ -223,20 +224,20 @@ async function cargar(){
 $('dia').value=diaOperativoLima();$('dia').min=diaOperativoLima();$('dia').max=siguienteDia(hoyLima(),179);
 $('dia').addEventListener('change',()=>{if(solicitud)return;horasSeleccionadas.clear();revision++;cargando=false;actualizarHoras();cargar();});
 $('recargar').addEventListener('click',cargar);
-$('nueva').addEventListener('click',()=>{solicitud=null;completada=false;horasSeleccionadas.clear();$('dia').disabled=false;actualizarHoras();$('campos').disabled=false;$('enviar').disabled=false;$('enviar').textContent='Solicitar reserva';$('nueva').hidden=true;cargar();});
+$('nueva').addEventListener('click',()=>{solicitud=null;completada=false;horasSeleccionadas.clear();$('dia').disabled=false;actualizarHoras();$('campos').disabled=false;$('enviar').disabled=!auth.currentUser?.providerData.some(p=>p.providerId==='google.com');$('enviar').textContent='Solicitar reserva';$('nueva').hidden=true;cargar();});
 $('reserva').addEventListener('submit',async event=>{
   event.preventDefault();
   // Barrera explicita: aunque alguien dispare el formulario a mano, no se escribe.
   if(!RESERVAS){mensaje('Las reservas en línea aún no están habilitadas.','error');return;}
   if(enviando||completada)return;enviando=true;$('enviar').disabled=true;mensaje('Guardando y comprobando todas las franjas…');
   try{
-    if(!auth.currentUser)await auth.signInAnonymously();
+    if(!auth.currentUser?.providerData.some(p=>p.providerId==='google.com'))throw new Error('Continúa con Google antes de reservar.');
     if(!solicitud){
       actualizarHoras();
       if(!$('minuto').value||!$('duracion').value)throw new Error('Marca al menos una hora libre en las tablas.');
       const payload={dia:$('dia').value,canchaId:$('cancha').value,minuto:Number($('minuto').value),duracion:Number($('duracion').value),nombre:$('nombre').value,telefono:telefonoNormalizado($('telefono').value),modalidad:calcularPrecio(precios.get($('cancha').value),horasSeleccionadas)?$('modalidad').value:null};
       const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(payload)));
-      const clave='grass-'+Array.from(new Uint8Array(digest),b=>b.toString(16).padStart(2,'0')).join('');
+      const clave='grass-'+auth.currentUser.uid+'-'+Array.from(new Uint8Array(digest),b=>b.toString(16).padStart(2,'0')).join('');
       const requestId=sessionStorage.getItem(clave)||crypto.randomUUID();sessionStorage.setItem(clave,requestId);
       solicitud={...payload,requestId};$('campos').disabled=true;$('dia').disabled=true;tarjetasCanchas();
     }
@@ -246,11 +247,12 @@ $('reserva').addEventListener('submit',async event=>{
       :`Solicitud ${resultado.id}: pendiente. El horario no se ocupará hasta que el personal asignado la apruebe. Guarda este código.`,'ok');
     $('nueva').hidden=false;
   }catch(error){mensaje(errorMensaje(error),'error');$('enviar').textContent='Reintentar misma solicitud';$('nueva').hidden=false;}
-  finally{enviando=false;$('enviar').disabled=completada;tarjetasCanchas();}
+  finally{enviando=false;$('enviar').disabled=completada || !auth.currentUser?.providerData.some(p=>p.providerId==='google.com');tarjetasCanchas();}
 });
 
 // La configuracion publica trae el horario global: se carga antes que las
 // canchas para no pintar disponibilidad con un horario que aun no se conoce.
+configurarAcceso(firebase,auth,db,NEGOCIO,()=>{solicitud=null;completada=false;horasSeleccionadas.clear();$('nombre').value='';$('telefono').value='';$('campos').disabled=false;$('dia').disabled=false;$('nueva').hidden=true;actualizarHoras();tarjetasCanchas();},()=>enviando);
 aplicarEstadoReservas();
 await cargar();
 // La ocupacion llega por listeners de Firestore, sin recargar la pagina.

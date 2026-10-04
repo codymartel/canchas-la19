@@ -15,6 +15,9 @@ class ClientesRepository {
   final Servicios servicios;
   final String negocioId;
   ClientesRepository(this.servicios, this.negocioId);
+  Stream<List<Registro>> registrados() =>
+      observar(servicios.coleccion(negocioId, 'clientesRegistrados').limit(50));
+
   Future<Pagina> buscar(String busqueda, {Object? cursor}) async {
     Query<Map<String, dynamic>> q = servicios.coleccion(negocioId, 'clientes');
     if (RegExp(r'^[+\d\s()-]+$').hasMatch(busqueda) &&

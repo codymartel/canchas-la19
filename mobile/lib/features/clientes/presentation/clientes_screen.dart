@@ -13,6 +13,7 @@ class ClientesScreen extends StatefulWidget {
 
 class _ClientesScreenState extends State<ClientesScreen> {
   final buscar = TextEditingController();
+  late final registrados = widget.provider.repository.registrados();
   @override
   void initState() {
     super.initState();
@@ -96,6 +97,41 @@ class _ClientesScreenState extends State<ClientesScreen> {
                 : 'Seleccionar cliente',
             style: Theme.of(context).textTheme.headlineSmall,
           ),
+          if (widget.onSeleccionar == null) ...[
+            const SizedBox(height: 16),
+            Text(
+              'Clientes registrados con Google',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const Text(
+              'Hasta 50 fichas privadas. El teléfono lo proporciona el cliente.',
+            ),
+            ListaDatos(
+              stream: registrados,
+              builder: (context, registros) => Column(
+                children: [
+                  for (final c in registros)
+                    Card(
+                      child: ListTile(
+                        leading: const Icon(Icons.person_outline),
+                        title: Text(c.texto('nombre')),
+                        subtitle: Text(
+                          [
+                            c.texto('telefono'),
+                            c.texto('email'),
+                          ].where((v) => v.isNotEmpty).join(' · '),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            const Divider(height: 32),
+            Text(
+              'Clientes registrados por el personal',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+          ],
           Campo('Nombre (prefijo) o teléfono completo', buscar),
           Wrap(
             spacing: 12,

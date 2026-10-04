@@ -63,6 +63,7 @@ const verified = (uid) => environment.authenticatedContext(uid, {
   email_verified: true,
 });
 
+const clienteGoogle = (uid) => environment.authenticatedContext(uid,{email:uid+'@test.local',firebase:{sign_in_provider:'google.com'}});
 const unverified = (uid) => environment.authenticatedContext(uid, {
   email: `${uid}@test.local`,
   email_verified: false,
@@ -203,7 +204,9 @@ function makeBooking(db, {
 
 function bookingBatch(db, booking, slotIndexes = booking.slots.map((_, index) => index)) {
   const batch = writeBatch(db);
-  batch.set(booking.ref, booking.body);
+  batch.set(booking.ref, booking.body.origen==='publico'?{...booking.body,createdAt:serverTimestamp(),updatedAt:serverTimestamp()}:booking.body);
+  if(booking.body.origen==='publico')batch.set(doc(db,'negocios',BUSINESS,'clientesRegistrados',booking.body.solicitanteUid),{uid:booking.body.solicitanteUid,email:booking.body.solicitanteUid+'@test.local',nombre:booking.body.clienteNombre,telefono:booking.body.telefono,creadoEn:serverTimestamp(),actualizadoEn:serverTimestamp()});
+  if(booking.body.origen==='publico')batch.set(doc(db,'negocios',BUSINESS,'limitesPublicos',booking.body.solicitanteUid),{reservaId:booking.id,ultimaSolicitud:serverTimestamp()});
   if (booking.body.estado === 'confirmada') {
     const minutos = operationalMinutes(booking).filter((_, index) => slotIndexes.includes(index));
     batch.set(agendaRef(db, booking), {
@@ -667,7 +670,7 @@ test('permisos de empleado y escrituras maliciosas no escalan privilegios', asyn
 
 test('una reserva publica directa guarda segmentos canonicos y datos privados', async () => {
   await seedApplication();
-  const db = anonymous(ANON_A).firestore();
+  const db = clienteGoogle(ANON_A).firestore();
   const booking = makeBooking(db, {
     id: 'r_publica_000001',
     uid: ANON_A,
@@ -743,8 +746,8 @@ test('el personal conserva nombre y telefono sin inventar precio ni pago', async
 
 test('los datos de reservas son privados incluso para otros solicitantes publicos', async () => {
   await seedApplication();
-  const owner = anonymous(ANON_A).firestore();
-  const other = anonymous(ANON_B).firestore();
+  const owner = clienteGoogle(ANON_A).firestore();
+  const other = clienteGoogle(ANON_B).firestore();
   const unauthenticated = environment.unauthenticatedContext().firestore();
   const booking = makeBooking(owner, {
     id: 'r_privada_000001',
@@ -840,7 +843,7 @@ for (const duration of [30, 60, 90, 120, 150, 180, 210, 240, 300, 360, 420, 480,
 
   test(`el publico ${duration % 60 ? "rechaza" : "reserva"} ${duration} minutos`, async () => {
     await seedApplication();
-    const publicDb = anonymous(ANON_A).firestore();
+    const publicDb = clienteGoogle(ANON_A).firestore();
     const publica = makeBooking(publicDb, {
       id: `r_duracion_publica_${duration}`,
       uid: ANON_A,
@@ -863,7 +866,7 @@ for (const duration of [30, 60, 90, 120, 150, 180, 210, 240, 300, 360, 420, 480,
 
 test('solo el empleado asignado aprueba una solicitud larga tras comprobar disponibilidad', async () => {
   await seedApplication();
-  const requester = anonymous(ANON_A).firestore();
+  const requester = clienteGoogle(ANON_A).firestore();
   const unassigned = verified(EMPLOYEE).firestore();
   const booking = makeBooking(requester, {
     id: 'r_aprobacion_larga_01',
@@ -954,7 +957,7 @@ test('admin, empleado y publico compitiendo por el mismo slot dejan exactamente 
   await seedApplication();
   const admin = verified(ADMIN).firestore();
   const employee = verified(EMPLOYEE).firestore();
-  const publicDb = anonymous(ANON_A).firestore();
+  const publicDb = clienteGoogle(ANON_A).firestore();
   const contenders = [
     [admin, makeBooking(admin, { id: 'carrera-admin', uid: ADMIN, duration: 30 })],
     [employee, makeBooking(employee, { id: 'carrera-empleado', uid: EMPLOYEE, duration: 30 })],
@@ -1277,7 +1280,7 @@ test('una transicion tiene que avanzar exactamente una version y a su nombre', a
 
 test('el publico no puede declararse confirmada una reserva larga', async () => {
   await seedApplication();
-  const publicDb = anonymous(ANON_A).firestore();
+  const publicDb = clienteGoogle(ANON_A).firestore();
   const lector = verified(ADMIN).firestore();
   const leer = (booking) => getDoc(doc(lector, 'negocios', BUSINESS, 'reservas', booking.id));
 
@@ -1593,14 +1596,14 @@ test('direccion y tarifa pendientes permiten reservar sin registrar pagos', asyn
   await assertSucceeds(bookingBatch(db, booking).commit());
   assert.equal((await getDoc(booking.ref)).data().adelantoCentimos, 0);
   await assertFails(bookingBatch(db, makeBooking(db,{id:'conflicto-config',uid:EMPLOYEE})).commit());
-  const publicDb = anonymous(ANON_A).firestore();
+  const publicDb = clienteGoogle(ANON_A).firestore();
   const publico = makeBooking(publicDb,{id:'r_publico_config',uid:ANON_A,minute:900,publicRequest:true});
   await assertSucceeds(bookingBatch(publicDb, publico).commit());
 });
 
 test('solo personal registra medias horas; la web exige horas e inicios completos', async () => {
   await seedApplication();
-  const publico = anonymous(ANON_A).firestore();
+  const publico = clienteGoogle(ANON_A).firestore();
   await assertFails(bookingBatch(publico, makeBooking(publico,{id:'r_publico_media_hora',uid:ANON_A,minute:900,duration:30,publicRequest:true})).commit());
   await assertFails(bookingBatch(publico, makeBooking(publico,{id:'r_publico_media_inicio',uid:ANON_A,minute:930,duration:60,publicRequest:true})).commit());
   const personal = verified(EMPLOYEE).firestore();
@@ -1990,6 +1993,73 @@ test('WhatsApp empleado: administrador valida, personal no cambia ni público le
  await assertSucceeds(updateDoc(doc(admin,base),{whatsappReservas:''}));
  await assertFails(setDoc(doc(admin,'negocios/'+BUSINESS+'/empleados/nuevo-whatsapp'),{...employeeRecord(),whatsappReservas:'mal'}));
  await assertSucceeds(setDoc(doc(admin,'negocios/'+BUSINESS+'/empleados/nuevo-whatsapp'),{...employeeRecord(),whatsappReservas:'+51900000000'}));
+});
+
+
+function intentoLimitado(db,id,uid,court='la-23') {
+ const b=makeBooking(db,{id,uid,court,publicRequest:true,duration:300});
+ const tx=writeBatch(db);
+ tx.set(b.ref,{...b.body,createdAt:serverTimestamp(),updatedAt:serverTimestamp()});
+ tx.set(doc(db,'negocios',BUSINESS,'limitesPublicos',uid),{reservaId:id,ultimaSolicitud:serverTimestamp()});
+ return tx;
+}
+test('Google registra ficha privada y rechaza acceso anónimo y contraseña',async()=>{
+ await seedApplication();
+ for(const ctx of [anonymous(ANON_A),verified(ANON_A)]){
+  const db=ctx.firestore();await assertFails(bookingBatch(db,makeBooking(db,{id:'r_sin_google',uid:ANON_A,publicRequest:true,duration:300})).commit());
+ }
+ const db=clienteGoogle(ANON_A).firestore();
+ await assertSucceeds(bookingBatch(db,makeBooking(db,{id:'r_google_ficha',uid:ANON_A,publicRequest:true,duration:300})).commit());
+ const ref=doc(db,'negocios',BUSINESS,'clientesRegistrados',ANON_A);assert.equal((await getDoc(ref)).data().telefono,'+51999888777');
+ await assertFails(getDoc(doc(clienteGoogle(ANON_B).firestore(),ref.path)));
+ await assertFails(getDoc(doc(environment.unauthenticatedContext().firestore(),ref.path)));
+ await assertSucceeds(getDoc(doc(verified(ADMIN).firestore(),ref.path)));
+ await assertFails(updateDoc(ref,{email:'falso@test.local',actualizadoEn:serverTimestamp()}));
+ await assertFails(updateDoc(ref,{uid:ANON_B,actualizadoEn:serverTimestamp()}));
+ await assertFails(deleteDoc(ref));
+});
+test('Una cuenta no puede pedir dos canchas ni borrar su control',async()=>{
+ await seedApplication();const db=clienteGoogle(ANON_A).firestore();
+ await assertSucceeds(bookingBatch(db,makeBooking(db,{id:'r_limite_inicial',uid:ANON_A,publicRequest:true,duration:300})).commit());
+ await environment.withSecurityRulesDisabled(async c=>updateDoc(doc(c.firestore(),'negocios',BUSINESS,'limitesPublicos',ANON_A),{ultimaSolicitud:Timestamp.fromMillis(Date.now()-120000)}));
+ await assertFails(intentoLimitado(db,'r_segunda_cancha',ANON_A).commit());
+ await assertFails(deleteDoc(doc(db,'negocios',BUSINESS,'limitesPublicos',ANON_A)));
+ await assertFails(updateDoc(doc(db,'negocios',BUSINESS,'limitesPublicos',ANON_A),{ultimaSolicitud:Timestamp.fromMillis(0)}));
+ const directa=makeBooking(db,{id:'r_sin_control',uid:ANON_A,publicRequest:true,duration:300});
+ await assertFails(setDoc(directa.ref,{...directa.body,createdAt:serverTimestamp(),updatedAt:serverTimestamp()}));
+});
+test('Cancelar libera el límite activo pero conserva la espera de 60 segundos',async()=>{
+ await seedApplication();const db=clienteGoogle(ANON_A).firestore();
+ await assertSucceeds(bookingBatch(db,makeBooking(db,{id:'r_limite_cancelada',uid:ANON_A,publicRequest:true,duration:300})).commit());
+ await environment.withSecurityRulesDisabled(async c=>updateDoc(doc(c.firestore(),'negocios',BUSINESS,'reservas','r_limite_cancelada'),{estado:'cancelada'}));
+ await assertFails(intentoLimitado(db,'r_demasiado_pronto',ANON_A).commit());
+ await environment.withSecurityRulesDisabled(async c=>updateDoc(doc(c.firestore(),'negocios',BUSINESS,'limitesPublicos',ANON_A),{ultimaSolicitud:Timestamp.fromMillis(Date.now()-61000)}));
+ await assertSucceeds(intentoLimitado(db,'r_despues_espera',ANON_A).commit());
+});
+test('Dos solicitudes simultáneas de una cuenta solo producen una reserva',async()=>{
+ await seedApplication();const db=clienteGoogle(ANON_A).firestore();
+ const resultados=await Promise.allSettled(['la-19','la-23'].map((court,i)=>bookingBatch(db,makeBooking(db,{id:'r_carrera_uid_'+i,uid:ANON_A,court,publicRequest:true,duration:300})).commit()));
+ assert.equal(resultados.filter(r=>r.status==='fulfilled').length,1);
+});
+test('Mil solicitudes repetidas no crean reservas adicionales',async()=>{
+ await seedApplication();const db=clienteGoogle(ANON_A).firestore();
+ await assertSucceeds(bookingBatch(db,makeBooking(db,{id:'r_mil_inicial',uid:ANON_A,publicRequest:true,duration:300})).commit());
+ let aceptadas=0;
+ for(let inicio=0;inicio<1000;inicio+=20){
+  const resultados=await Promise.allSettled(Array.from({length:20},(_,i)=>intentoLimitado(db,'r_abuso_'+(inicio+i),ANON_A).commit()));
+  aceptadas+=resultados.filter(r=>r.status==='fulfilled').length;
+ }
+ assert.equal(aceptadas,0);
+ await environment.withSecurityRulesDisabled(async c=>assert.equal((await getDocs(collection(c.firestore(),'negocios',BUSINESS,'reservas'))).size,1));
+});
+
+test('Un lote público no reserva dos canchas con el mismo control',async()=>{
+ await seedApplication();const db=clienteGoogle(ANON_A).firestore();
+ const primero=makeBooking(db,{id:'r_lote_primera',uid:ANON_A,court:'la-19',publicRequest:true,duration:300});
+ const segundo=makeBooking(db,{id:'r_lote_segunda',uid:ANON_A,court:'la-23',publicRequest:true,duration:300});
+ const batch=bookingBatch(db,primero);batch.set(segundo.ref,{...segundo.body,createdAt:serverTimestamp(),updatedAt:serverTimestamp()});
+ await assertFails(batch.commit());
+ await environment.withSecurityRulesDisabled(async c=>assert.equal((await getDocs(collection(c.firestore(),'negocios',BUSINESS,'reservas'))).size,0));
 });
 
 let failures = 0;

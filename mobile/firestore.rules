@@ -347,9 +347,9 @@ service cloud.firestore {
     }
 
     function altaPersonal(n, id, coleccion, r) {
-      return identidadPersonal()
+      return r.origen == 'personal'
+        && identidadPersonal()
         && puedeResolverCancha(n, r.canchaId)
-        && r.origen == 'personal'
         && r.solicitanteUid == ''
         && r.creadoPor == request.auth.uid
         && (r.duracion <= 180
@@ -362,9 +362,30 @@ service cloud.firestore {
             && r.atendidoPor == '');
     }
 
+    function clientePublico() {
+      return autenticado() && request.auth.token.firebase.sign_in_provider == 'google.com';
+    }
+    function limiteAnteriorLiberado(n, c) {
+      let r = get(/databases/$(database)/documents/negocios/$(n)/reservas/$(c.reservaId)).data;
+      return request.time >= c.ultimaSolicitud + duration.value(60,'s')
+        && (r.estado in ['cancelada','rechazada','no_asistio'] || r.fin <= request.time);
+    }
+    function limiteDisponible(n) {
+      let ruta = /databases/$(database)/documents/negocios/$(n)/limitesPublicos/$(request.auth.uid);
+      return !exists(ruta) || limiteAnteriorLiberado(n, get(ruta).data);
+    }
+    function controlPublico(n, id) {
+      let c = getAfter(/databases/$(database)/documents/negocios/$(n)/limitesPublicos/$(request.auth.uid)).data;
+      return limiteDisponible(n) ? c.reservaId == id && c.ultimaSolicitud == request.time : false;
+    }
+    function fichaCorresponde(n,r) {
+      let c = getAfter(/databases/$(database)/documents/negocios/$(n)/clientesRegistrados/$(request.auth.uid)).data;
+      return c.uid == request.auth.uid && c.email == request.auth.token.email && c.nombre == r.clienteNombre && c.telefono == r.telefono;
+    }
     function altaPublica(n, id, coleccion, r) {
-      return coleccion == 'reservas'
-        && anonimo()
+      return r.origen == 'publico' && coleccion == 'reservas'
+        && r.duracion % 60 == 0 && r.minuto % 60 == 0
+        && clientePublico() && controlPublico(n,id) && fichaCorresponde(n,r)
         && id.size() >= 10 && id.size() <= 102
         && id.matches('^r_[A-Za-z0-9_-]*$')
         && r.origen == 'publico'
@@ -387,11 +408,11 @@ service cloud.firestore {
 
     function reservaValida(n, id, coleccion) {
       let r = request.resource.data;
-      return id.size() > 0 && id.size() <= 128
-        && dentroHorario(n, r)
+      return (id.size() > 0 && id.size() <= 128
         && (altaPersonal(n, id, coleccion, r)
-          || altaPublica(n, id, coleccion, r))
-        && camposReservaValidos(n, r, coleccion);
+          || altaPublica(n, id, coleccion, r)))
+        ? dentroHorario(n, r) && camposReservaValidos(n, r, coleccion)
+        : false;
     }
 
     function efectivoValido(n) {
@@ -770,9 +791,44 @@ service cloud.firestore {
         allow delete: if false;
       }
 
+      match /clientesRegistrados/{uid} {
+        function fichaValida() {
+          let d = request.resource.data;
+          return clientePublico() && request.auth.uid == uid
+            && d.keys().hasOnly(['uid','email','nombre','telefono','creadoEn','actualizadoEn'])
+            && d.uid == uid && d.email == request.auth.token.email
+            && d.nombre is string && d.nombre.size() > 0 && d.nombre.size() <= 120
+            && d.telefono is string && (d.telefono == '' || d.telefono.matches('^[+][1-9][0-9]{9,14}$'))
+            && d.actualizadoEn == request.time;
+        }
+        allow get: if (clientePublico() && request.auth.uid == uid) || puede(n,'clientes');
+        allow list: if puede(n,'clientes') && limite(50);
+        allow create: if fichaValida() && request.resource.data.creadoEn == request.time;
+        allow update: if fichaValida() && request.resource.data.creadoEn == resource.data.creadoEn;
+        allow delete: if false;
+      }
+
+      match /limitesPublicos/{uid} {
+        function nuevoValido() {
+          let d = request.resource.data;
+          let r = getAfter(/databases/$(database)/documents/negocios/$(n)/reservas/$(d.reservaId)).data;
+          return clientePublico() && request.auth.uid == uid
+            && d.keys().hasOnly(['reservaId','ultimaSolicitud'])
+            && d.reservaId is string && d.ultimaSolicitud == request.time
+            && r.solicitanteUid == uid && r.origen == 'publico' && r.createdAt == request.time;
+        }
+        function anteriorLiberado() {
+          return limiteAnteriorLiberado(n, resource.data);
+        }
+        allow get: if autenticado() && request.auth.uid == uid;
+        allow list, delete: if false;
+        allow create: if nuevoValido();
+        allow update: if nuevoValido() && anteriorLiberado();
+      }
+
       match /reservas/{id} {
         allow get: if puede(n, 'agenda')
-          || (anonimo()
+          || ((clientePublico() || anonimo())
             && (!exists(/databases/$(database)/documents/negocios/$(n)/reservas/$(id))
               || resource.data.solicitanteUid == request.auth.uid));
         allow list: if puede(n, 'agenda') && limite(1500);

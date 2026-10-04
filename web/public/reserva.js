@@ -29,6 +29,17 @@ export async function solicitarReserva({ firebase, db, uid, negocio, datos }) {
       }
       throw new Error('La clave ya existe para otra reserva.');
     }
+    const limiteRef = db.collection('negocios').doc(negocio).collection('limitesPublicos').doc(uid);
+    const limite = await tx.get(limiteRef);
+    if(limite.exists){
+      const l=limite.data();
+      if(Date.now()-l.ultimaSolicitud.toMillis()<60000)throw new Error('Espera 60 segundos entre solicitudes.');
+      const anterior=await tx.get(db.collection('negocios').doc(negocio).collection('reservas').doc(l.reservaId));
+      const a=anterior.data();
+      if(a && ['pendiente','confirmada'].includes(a.estado) && a.fin.toMillis()>Date.now())throw new Error('Ya tienes una solicitud o reserva activa. Espera a que finalice o coordina su cancelación con el personal.');
+    }
+    const clienteRef=db.collection('negocios').doc(negocio).collection('clientesRegistrados').doc(uid);
+    const cliente=await tx.get(clienteRef);
     const publica = await tx.get(publicaRef);
     const ocupados = { ...(publica.data()?.ocupados ?? {}) };
     const confirmada = datos.duracion <= 180;
@@ -41,6 +52,9 @@ export async function solicitarReserva({ firebase, db, uid, negocio, datos }) {
     inicio.setUTCMinutes(inicio.getUTCMinutes() + datos.minuto);
     const fin = new Date(inicio.getTime() + datos.duracion * 60000);
     const ahora = firebase.firestore.FieldValue.serverTimestamp();
+    tx.set(limiteRef,{reservaId:id,ultimaSolicitud:ahora});
+    if(!cliente.exists)throw new Error('Inicia sesión nuevamente para registrar tu cuenta.');
+    tx.update(clienteRef,{nombre:datos.nombre.trim(),telefono:datos.telefono.trim(),actualizadoEn:ahora});
     tx.set(ref, {
       schemaVersion: 5,
       negocioId: negocio,

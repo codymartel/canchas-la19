@@ -16,3 +16,4 @@ button:hover:not(:disabled){background:#103f2e;color:#fff}input,select{border-co
 @media(min-width:761px) and (max-width:1050px){.grid,.galeria{grid-template-columns:repeat(2,minmax(0,1fr))}.grid>article:last-child{grid-column:1/-1}}
 @media(max-width:480px){header{padding:1.8rem 1rem 3rem}h1{font-size:2.7rem}main{padding:.65rem}section{border-radius:.8rem}.fecha-agenda{max-width:none}fieldset{padding:.8rem}button{width:100%;margin-right:0}th,td{padding:.55rem .35rem}.hora-libre{gap:.35rem}footer{padding:1.5rem 1rem}}
 th:first-child{width:38%}th:nth-child(2){width:37%}th:nth-child(3){width:25%}td:last-child{font-variant-numeric:tabular-nums}caption{font-size:.85rem;color:#586a60}
+.acceso-cliente{padding:1rem;border:1px solid var(--borde);border-radius:.7rem;margin-bottom:1rem;background:#f8faf9}
