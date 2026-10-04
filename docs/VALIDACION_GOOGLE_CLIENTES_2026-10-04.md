@@ -1,6 +1,6 @@
 # Acceso con Google y clientes registrados — 4 de octubre de 2026
 
-Estado actual: código conservado y probado localmente; publicación revertida por fallo de conexión del nuevo build del panel. El formulario público permanece cerrado. Google está habilitado, pero el nuevo flujo público no está activo.
+Estado actual: registro público con Google, nombre y teléfono publicado; reservas públicas cerradas en interfaz y reglas. Panel privado conservado en su versión anterior y conectado. El fallo del nuevo build privado sigue pendiente de diagnóstico.
 
 ## Comportamiento
 
@@ -92,3 +92,31 @@ La última versión pública contiene los archivos del commit ea674b6, con el ú
 La verificación posterior compara hashes del panel y la web restaurados, reglas activas, contenido de clientes y empleados, fichas registradas, controles públicos y updateTime de las cuatro reservas originales. Todo permanece intacto. No se creó ninguna reserva de prueba ni se hizo push. Google y el dominio público quedan configurados para el siguiente intento; la app privada y el panel conservan su acceso original.
 
 La prueba con una cuenta Google real y las métricas agregadas antes/después de una reserva en producción quedan pendientes porque el formulario no se habilitó. Los respaldos, versiones y captura del panel restaurado están en .production-audit/, excluidos de Git.
+
+## Etapa de registro únicamente — 4 de octubre, 06:57 UTC
+
+El usuario autorizó continuar únicamente con el registro público y pidió informar cada paso, mantener cerradas las reservas y detenerse si reaparecía el fallo. No se desplegó Hosting personal ni se recompiló el panel.
+
+El acceso Google muestra un formulario separado para nombre y teléfono. El cliente guarda explícitamente su ficha privada; no se crea una ficha incompleta al iniciar sesión en esta etapa. Se normaliza el teléfono y se puede actualizar la ficha conservando creadoEn. No se solicita verificación adicional de correo ni se afirma que el teléfono esté verificado por SMS.
+
+firebase.json apunta en esta etapa a mobile/firestore.registro.rules: deriva de las reglas anteriores que funcionaban, añade únicamente clientesRegistrados y hace que altaPublica devuelva false. Se rechazan tanto reservas directas como solicitudes largas de clientes públicos, incluso si fuerzan el SDK. Los permisos y las reservas del personal conservan su lógica anterior. mobile/firestore.rules conserva el flujo futuro de reservas y límites, probado antes pero sin publicar en esta etapa; no sustituir la ruta de firebase.json hasta que se autorice y valide la reapertura.
+
+Validación actual: 22 pruebas web aprobadas y prueba de integración Auth/Firestore SDK en demo-grass-local aprobada. Se comprueban Google sin requisito email_verified adicional, nombre y teléfono obligatorios, formato internacional, persistencia, actualización sin alterar la fecha de alta, privacidad entre cuentas, suplantación denegada, correo confiable, eliminación denegada, lectura del personal con permiso Clientes y límite 50. Se deniegan reservas públicas directas y largas con Google y anónimo; la reserva válida del personal con su login original se acepta. No apareció el límite de 1.000 expresiones en esta ejecución.
+
+La primera compilación local de las reglas detectó un error de sintaxis al generar el archivo; se corrigió y se repitió satisfactoriamente la integración antes de cualquier publicación.
+
+Publicación limitada y ordenada: primero firestore:rules, comprobación del panel conectado y hashes; después hosting:publica. Versiones actuales:
+
+| Recurso | Versión |
+| --- | --- |
+| Reglas de registro | 69ae0177-cfa6-4a1b-b973-3649afe86455 |
+| Publica | 7e7292acd386d865 |
+| Personal, conservado | 683c539ee01f668f |
+
+Se compararon hashes publicados de app.js, acceso.js, index.html, styles.css, reserva.js y firebase-config.js con los locales; coinciden. El indicador de reservas sigue en false. La revisión visual confirma Registra tu cuenta y el aviso de reservas cerradas; el panel sigue mostrando Conectado en vivo con su acceso original.
+
+Un intento de abrir Google desde el navegador automatizado terminó con el mensaje Acceso cancelado, sin crear ninguna ficha; no se completó una sesión Google real ni se afirma haberla comprobado. El usuario puede probar su cuenta en https://glass-sintetico-tienda.web.app/ → Continuar con Google → nombre y teléfono → Guardar mis datos. El guardado completo ya fue probado con Auth y Firestore emulados.
+
+Las cuatro reservas existentes, los dos clientes anteriores y el empleado conservan sus datos. No se crearon clientes ficticios ni reservas en producción. Sin push. Los resultados, verificaciones y capturas están en .production-audit/ y no se publican.
+
+Archivos de esta etapa: firebase.json; mobile/firestore.registro.rules; web/public/acceso.js; web/public/app.js; web/public/index.html; web/test/acceso.test.js; tools/firebase/test/registro-publico.test.mjs; este informe.

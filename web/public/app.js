@@ -252,7 +252,7 @@ $('reserva').addEventListener('submit',async event=>{
 
 // La configuracion publica trae el horario global: se carga antes que las
 // canchas para no pintar disponibilidad con un horario que aun no se conoce.
-configurarAcceso(firebase,auth,db,NEGOCIO,()=>{solicitud=null;completada=false;horasSeleccionadas.clear();$('nombre').value='';$('telefono').value='';$('campos').disabled=false;$('dia').disabled=false;$('nueva').hidden=true;actualizarHoras();tarjetasCanchas();},()=>enviando);
+configurarAcceso(firebase,auth,db,NEGOCIO,()=>{solicitud=null;completada=false;horasSeleccionadas.clear();$('nombre').value='';$('telefono').value='';$('campos').disabled=false;$('dia').disabled=false;$('nueva').hidden=true;actualizarHoras();tarjetasCanchas();},()=>enviando,RESERVAS);
 aplicarEstadoReservas();
 await cargar();
 // La ocupacion llega por listeners de Firestore, sin recargar la pagina.

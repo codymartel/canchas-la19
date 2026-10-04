@@ -1,0 +1,906 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function autenticado() {
+      return request.auth != null;
+    }
+
+    function verificado() {
+      return autenticado() && request.auth.token.email_verified == true;
+    }
+
+    function anonimo() {
+      return autenticado()
+        && request.auth.token.firebase.sign_in_provider == 'anonymous';
+    }
+
+    function identidadPersonal() {
+      return autenticado()
+        && request.auth.token.firebase.sign_in_provider != 'anonymous';
+    }
+
+    function rutaConfiguracion() {
+      return /databases/$(database)/documents/sistema/grass;
+    }
+
+    function existeConfiguracion() {
+      return exists(rutaConfiguracion());
+    }
+
+    function esAdministrador() {
+      return verificado() && existeConfiguracion()
+        && get(rutaConfiguracion()).data.administradorUid == request.auth.uid;
+    }
+
+    function negocioCoincide(n) {
+      return existeConfiguracion()
+        && get(rutaConfiguracion()).data.negocioId == n;
+    }
+
+    function esAdministradorDe(n) {
+      return esAdministrador() && negocioCoincide(n);
+    }
+
+    // Fundacion del negocio por el propio administrador, en la misma transaccion
+    // que las canchas. Solo aplica cuando el documento NO existe todavia, asi que
+    // un negocio ya fundado no puede ser reclamado ni ampliado por otro.
+    function reclamoValido() {
+      return identidadPersonal()
+        && verificado()
+        && !exists(rutaConfiguracion())
+        && existsAfter(rutaConfiguracion())
+        && getAfter(rutaConfiguracion()).data.administradorUid == request.auth.uid
+        && getAfter(rutaConfiguracion()).data.negocioId is string
+        && getAfter(rutaConfiguracion()).data.negocioId.size() >= 3
+        && getAfter(rutaConfiguracion()).data.negocioId.size() <= 64
+        && getAfter(rutaConfiguracion()).data.keys().hasOnly(
+          ['administradorUid', 'negocioId', 'zonaHoraria', 'creadoEn'])
+        && (!('zonaHoraria' in getAfter(rutaConfiguracion()).data)
+          || getAfter(rutaConfiguracion()).data.zonaHoraria == 'America/Lima');
+    }
+
+    function negocioCoincideReferencia(n) {
+      return (existsAfter(rutaConfiguracion())
+          && getAfter(rutaConfiguracion()).data.negocioId == n)
+        || (existeConfiguracion()
+          && get(rutaConfiguracion()).data.negocioId == n);
+    }
+
+    function existeEmpleado(n) {
+      let ruta = /databases/$(database)/documents/negocios/$(n)/empleados/$(request.auth.uid);
+      return autenticado() && exists(ruta);
+    }
+
+    function esEmpleadoActivo(n) {
+      let ruta = /databases/$(database)/documents/negocios/$(n)/empleados/$(request.auth.uid);
+      return existeEmpleado(n)
+        && negocioCoincide(n)
+        && get(ruta).data.activo == true
+        && get(ruta).data.rol == 'empleado_control';
+    }
+
+    function puede(n, permiso) {
+      let ruta = /databases/$(database)/documents/negocios/$(n)/empleados/$(request.auth.uid);
+      return esAdministradorDe(n)
+        || (esEmpleadoActivo(n)
+          && get(ruta).data.permisos != null
+          && get(ruta).data.permisos[permiso] == true);
+    }
+
+    function puedeResolverCancha(n, cancha) {
+      let config = /databases/$(database)/documents/sistema/grass;
+      let ruta = /databases/$(database)/documents/negocios/$(n)/empleados/$(request.auth.uid);
+      return autenticado() && exists(config)
+        && get(config).data.negocioId == n
+        && (verificado()
+            && get(config).data.administradorUid == request.auth.uid
+          || exists(ruta)
+            && get(ruta).data.activo == true
+            && get(ruta).data.rol == 'empleado_control'
+            && get(ruta).data.permisos != null
+            && get(ruta).data.permisos.reservas == true
+            && get(ruta).data.sedes is list
+            && cancha in get(ruta).data.sedes);
+    }
+
+    function limite(n) {
+      return request.query.limit != null && request.query.limit <= n;
+    }
+
+    function sedeValida(s) {
+      return s is string && s in ['la-19', 'la-23', 'la-24'];
+    }
+
+    function duracionValida(d) {
+      return d is int && d >= 30 && d <= 600 && d % 30 == 0;
+    }
+
+    function jornadaValida(j, dia) {
+      return j is map && j.size() == 3
+        && j.year is string && j.year.matches('^[0-9]{4}$')
+        && j.month is string && j.month.matches('^(0[1-9]|1[0-2])$')
+        && j.day is string && j.day.matches('^(0[1-9]|[12][0-9]|3[01])$')
+        && dia == j.year + '-' + j.month + '-' + j.day;
+    }
+
+    function segmentoValido(s) {
+      return s is map && s.size() == 6
+        && s.year is string && s.year.matches('^[0-9]{4}$')
+        && s.month is string && s.month.matches('^(0[1-9]|1[0-2])$')
+        && s.day is string && s.day.matches('^(0[1-9]|[12][0-9]|3[01])$')
+        && s.dia == s.year + '-' + s.month + '-' + s.day
+        && s.minuto is string && s.minuto.matches('^(0|[1-9][0-9]{0,3})$')
+        && int(s.minuto) >= 0 && int(s.minuto) < 1440
+        && int(s.minuto) % 30 == 0
+        && s.cantidad is int && s.cantidad >= 1 && s.cantidad <= 36;
+    }
+
+    function segmentosValidos(r) {
+      let primero = r.segmentos[0];
+      return r.segmentos is list
+        && r.segmentos.size() >= 1 && r.segmentos.size() <= 2
+        && segmentoValido(primero)
+        && r.inicio == timestamp.date(
+          int(primero.year), int(primero.month), int(primero.day))
+          + duration.value(int(primero.minuto) + 300, 'm')
+        && (r.segmentos.size() == 1
+            && primero.cantidad == r.duracion / 30
+            && int(primero.minuto) + primero.cantidad * 30 <= 1440
+          || r.segmentos.size() == 2
+            && segmentoValido(r.segmentos[1])
+            && int(primero.minuto) + primero.cantidad * 30 == 1440
+            && int(r.segmentos[1].minuto) == 0
+            && primero.cantidad + r.segmentos[1].cantidad == r.duracion / 30
+            && timestamp.date(
+              int(r.segmentos[1].year),
+              int(r.segmentos[1].month),
+              int(r.segmentos[1].day)) + duration.value(300, 'm')
+              == r.inicio + duration.value(primero.cantidad * 30, 'm'));
+    }
+
+    function rutaAgendaDia(n, cancha, dia) {
+      return /databases/$(database)/documents/negocios/$(n)/agenda/$(cancha)/dias/$(dia);
+    }
+
+    function rutaOcupacionPublica(n, cancha, dia) {
+      return /databases/$(database)/documents/agenda_publica/$(n)/canchas/$(cancha)/dias/$(dia);
+    }
+
+    function diasValidos(r) {
+      return r.dias is list && r.dias.size() == r.segmentos.size()
+        && r.dias[0] == r.segmentos[0].dia
+        && (r.dias.size() == 1 || r.dias[1] == r.segmentos[1].dia);
+    }
+
+    // Horario de atencion y duracion base del turno: una sola configuracion
+    // del negocio, identica para La 19, La 23 y La 24. Vive en el documento
+    // privado del negocio y se proyecta a negocios_publicos.
+    function horarioValido(d) {
+      return d.aperturaMinuto is int
+        && d.aperturaMinuto >= 0 && d.aperturaMinuto < 1440
+        && d.aperturaMinuto % 30 == 0
+        && d.cierreMinuto is int
+        && d.cierreMinuto > 0 && d.cierreMinuto <= 1440
+        && d.cierreMinuto % 30 == 0
+        && d.aperturaMinuto != d.cierreMinuto
+        && d.duracionTurnoMinutos is int
+        && d.duracionTurnoMinutos >= 30 && d.duracionTurnoMinutos <= 240
+        && d.duracionTurnoMinutos % 30 == 0;
+    }
+
+    // Direccion y tarifa pendientes no alteran disponibilidad ni permisos.
+    function reservable(c) {
+      return c.activa == true;
+    }
+
+    function empleadoAsignado(n, cancha) {
+      let ruta = /databases/$(database)/documents/negocios/$(n)/empleados/$(request.auth.uid);
+      return esEmpleadoActivo(n)
+        && get(ruta).data.permisos.reservas == true
+        && cancha in get(ruta).data.sedes;
+    }
+
+    function horarioNegocioConfigurado(n) {
+      let ruta = /databases/$(database)/documents/negocios/$(n);
+      return exists(ruta) && horarioValido(get(ruta).data);
+    }
+
+    // Ternarios y cuerpos con if no compilan en el emulador, asi que el cruce
+    // de medianoche se expresa como una sola formula booleana.
+    function cabe(h, r) {
+      return h.cierreMinuto > h.aperturaMinuto
+          && r.minuto >= h.aperturaMinuto
+          && r.minuto + r.duracion <= h.cierreMinuto
+        || h.cierreMinuto < h.aperturaMinuto
+          && r.minuto >= h.aperturaMinuto
+          && r.minuto + r.duracion <= h.cierreMinuto + 1440;
+    }
+
+    function dentroHorario(n, r) {
+      let c = get(/databases/$(database)/documents/negocios/$(n)/canchas/$(r.canchaId)).data;
+      let h = get(/databases/$(database)/documents/negocios/$(n)).data;
+      return horarioValido(h)
+        && reservable(c)
+        && r.duracion % h.duracionTurnoMinutos == 0
+        && (r.minuto - h.aperturaMinuto + 1440) % h.duracionTurnoMinutos == 0
+        && cabe(h, r);
+    }
+
+    function horarioPublicoIgual(ruta, privado) {
+      let p = getAfter(ruta).data;
+      return p.aperturaMinuto == privado.aperturaMinuto
+        && p.cierreMinuto == privado.cierreMinuto
+        && p.duracionTurnoMinutos == privado.duracionTurnoMinutos;
+    }
+
+    // El horario global vive en el documento privado y se proyecta al publico.
+    // Se compara contra el estado posterior de la escritura, no con get(), para
+    // que tambien funcione cuando el negocio se escribe en el mismo lote.
+    function horarioPublicoSincronizado(n, privado) {
+      let ruta = /databases/$(database)/documents/negocios_publicos/$(n);
+      return existsAfter(ruta) && horarioPublicoIgual(ruta, privado);
+    }
+
+    function canchaPublicaIgual(ruta, n, id, c) {
+      let p = getAfter(ruta).data;
+      return p.id == id
+        && p.negocioId == n
+        && p.sedeId == c.sedeId
+        && p.nombre == c.nombre
+        && p.direccion == c.direccion
+        && p.activa == reservable(c)
+        && p.tarifaTurnoCentimos == c.tarifaTurnoCentimos;
+    }
+
+    function canchaPublicaSincronizada(n, id, c) {
+      let ruta = /databases/$(database)/documents/canchas_publicas/$(id);
+      return existsAfter(ruta) && canchaPublicaIgual(ruta, n, id, c);
+    }
+
+    function promocionPublicaIgual(ruta, n, p0) {
+      let p = getAfter(ruta).data;
+      return p.negocioId == n && p.titulo == p0.titulo
+        && p.descripcion == p0.descripcion && p.sedes == p0.sedes
+        && p.desde == p0.desde && p.hasta == p0.hasta
+        && p.activa == p0.activa
+        && p.descuentoCentimos == p0.descuentoCentimos;
+    }
+
+    function promocionPublicaSincronizada(n, id, p) {
+      let ruta = /databases/$(database)/documents/promociones_publicas/$(id);
+      return existsAfter(ruta) && promocionPublicaIgual(ruta, n, p);
+    }
+
+    function camposReservaValidos(n, r, coleccion) {
+      return r.size() == 29
+        && r.schemaVersion == 5
+        && negocioCoincide(n)
+        && r.negocioId == n
+        && sedeValida(r.canchaId)
+        && r.sedeId == r.canchaId
+        && r.dia is string && jornadaValida(r.jornada, r.dia)
+        && r.minuto is int && r.minuto >= 0 && r.minuto < 2880
+        && duracionValida(r.duracion)
+        && r.minutos is list
+        && minutosCorresponden(r, r.minutos)
+        && r.inicio is timestamp
+        && r.inicio == timestamp.date(
+          int(r.jornada.year), int(r.jornada.month), int(r.jornada.day))
+          + duration.value(r.minuto + 300, 'm')
+        && r.fin == r.inicio + duration.value(r.duracion, 'm')
+        && r.version == 1
+        && r.montoCentimos == 0 && r.adelantoCentimos == 0
+        && r.saldoCentimos == 0 && r.metodoPago == ''
+        && r.promocionId == ''
+        && r.historialPagos is list && r.historialPagos.size() == 0
+        && r.clienteNombre is string && r.clienteNombre.size() > 0
+        && r.clienteNombre.size() <= 120
+        && r.telefono is string && r.telefono.size() <= 24
+        && r.createdAt is timestamp && r.updatedAt is timestamp
+        && camposSegunColeccion(coleccion, r);
+    }
+
+    // El emulador de Firestore no compila cuerpos con if ni ternarios, asi que
+    // cada variante se expresa como una formula booleana.
+    function camposSegunColeccion(coleccion, r) {
+      return coleccion == 'bloqueos' && camposBloqueo(r)
+        || coleccion == 'reservas' && camposReserva(r);
+    }
+
+    function camposBloqueo(r) {
+      return r.bloqueo == true
+        && r.clienteId == '' && r.telefono == ''
+        && r.montoCentimos == 0 && r.adelantoCentimos == 0
+        && r.origen == 'personal';
+    }
+
+    function camposReserva(r) {
+      return r.bloqueo == false
+        && r.clienteId == ''
+        && r.telefono.size() >= 7
+        && r.origen in ['publico', 'personal'];
+    }
+
+    function minutosCorresponden(r, minutos) {
+      return minutos.size() == r.duracion / 30
+        && minutos[0] == string(r.minuto);
+    }
+
+    function cambioOcupaAgenda(n, id, coleccion, r) {
+      let ruta = rutaAgendaDia(n, r.canchaId, r.dia);
+      let despues = getAfter(ruta).data;
+      return existsAfter(ruta)
+        && despues.ultimaOperacion.reservaId == id
+        && despues.ultimaOperacion.coleccion == coleccion
+        && despues.ultimaOperacion.tipo == 'ocupar'
+        && despues.ultimaOperacion.minutos == r.minutos;
+    }
+
+    function cambioLiberaAgenda(n, id, coleccion, r) {
+      let ruta = rutaAgendaDia(n, r.canchaId, r.dia);
+      let despues = getAfter(ruta).data;
+      return existsAfter(ruta)
+        && despues.ultimaOperacion.reservaId == id
+        && despues.ultimaOperacion.coleccion == coleccion
+        && despues.ultimaOperacion.tipo == 'liberar'
+        && despues.ultimaOperacion.minutos == r.minutos;
+    }
+
+    function altaPersonal(n, id, coleccion, r) {
+      return identidadPersonal()
+        && puedeResolverCancha(n, r.canchaId)
+        && r.origen == 'personal'
+        && r.solicitanteUid == ''
+        && r.creadoPor == request.auth.uid
+        && (r.duracion <= 180
+            && r.estado == 'confirmada'
+            && r.atendidoPor == request.auth.uid
+            && cambioOcupaAgenda(n, id, coleccion, r)
+          || r.duracion > 180
+            && coleccion == 'reservas'
+            && r.estado == 'pendiente'
+            && r.atendidoPor == '');
+    }
+
+    // Etapa de registro: ningún cliente público puede crear reservas.
+    function altaPublica(n, id, coleccion, r) { return false; }
+
+    function reservaValida(n, id, coleccion) {
+      let r = request.resource.data;
+      return id.size() > 0 && id.size() <= 128
+        && dentroHorario(n, r)
+        && (altaPersonal(n, id, coleccion, r)
+          || altaPublica(n, id, coleccion, r))
+        && camposReservaValidos(n, r, coleccion);
+    }
+
+    function efectivoValido(n) {
+      let a = resource.data;
+      let r = request.resource.data;
+      return a.schemaVersion == 5 && a.bloqueo == false && a.estado == 'confirmada'
+        && puedeResolverCancha(n, a.canchaId)
+        && r.diff(a).affectedKeys().hasOnly(['montoCentimos', 'adelantoCentimos', 'saldoCentimos', 'metodoPago', 'historialPagos', 'version', 'updatedAt'])
+        && r.version == a.version + 1 && r.updatedAt == request.time
+        && r.montoCentimos is int && r.montoCentimos > 0 && r.montoCentimos <= 100000000
+        && (a.adelantoCentimos == 0 || r.montoCentimos == a.montoCentimos)
+        && r.adelantoCentimos is int && r.adelantoCentimos >= a.adelantoCentimos
+        && r.adelantoCentimos <= r.montoCentimos
+        && r.saldoCentimos == r.montoCentimos - r.adelantoCentimos
+        && r.metodoPago == 'efectivo_manual'
+        && r.historialPagos is list && a.historialPagos.size() < 100
+        && r.historialPagos.size() == a.historialPagos.size() + 1
+        && eventoEfectivoValido(a, r);
+    }
+
+    function eventoEfectivoValido(a, r) {
+      let e = r.historialPagos[a.historialPagos.size()];
+      return e is map && e.keys().hasOnly(['id','registradoPor','importeCentimos','montoCentimos','fecha','metodo']) && e.size() == 6
+        && e.id is string && e.id.size() >= 16 && e.id.size() <= 96
+        && e.registradoPor == request.auth.uid && e.metodo == 'efectivo_manual'
+        && e.importeCentimos is int && e.importeCentimos == r.adelantoCentimos - a.adelantoCentimos
+        && e.montoCentimos == r.montoCentimos
+        && (e.importeCentimos > 0 || r.montoCentimos != a.montoCentimos)
+        && e.fecha is timestamp && e.fecha >= request.time - duration.value(5, 'm') && e.fecha <= request.time + duration.value(1, 'm')
+        && r.historialPagos == a.historialPagos.concat([e]);
+    }
+
+    function transicionValida(n, id, coleccion) {
+      let antes = resource.data;
+      let ahora = request.resource.data;
+      return antes.schemaVersion == 5
+        && puedeResolverCancha(n, antes.canchaId)
+        && antes.estado in ['pendiente', 'confirmada']
+        && ahora.estado in ['confirmada', 'rechazada', 'cancelada', 'no_asistio']
+        && ahora.version == antes.version + 1
+        && ahora.diff(antes).affectedKeys().hasOnly([
+          'estado', 'atendidoPor', 'updatedAt', 'version'
+        ])
+        && ahora.atendidoPor == request.auth.uid
+        && (antes.estado == 'pendiente' && antes.duracion > 180
+            && (ahora.estado == 'confirmada'
+                && empleadoAsignado(n, antes.canchaId)
+                && cambioOcupaAgenda(n, id, coleccion, ahora)
+              || ahora.estado == 'rechazada'
+                )
+          || antes.estado == 'confirmada'
+            && (ahora.estado == 'cancelada'
+                && cambioLiberaAgenda(n, id, coleccion, ahora)
+              || ahora.estado == 'no_asistio'
+                ));
+    }
+
+    // diff() solo admite mapas: hay que comparar .data con .data. Con snapshots
+    // la expresion falla y el emulador deniega cualquier cambio real.
+    function camposNegocioPermitidos(despues, antes) {
+      return despues.data.propietarioUid == antes.data.propietarioUid
+        && despues.data.diff(antes.data).affectedKeys().hasOnly([
+          'nombre', 'descripcion', 'telefonoPublico', 'whatsapp', 'galeria',
+          'aperturaMinuto', 'cierreMinuto', 'duracionTurnoMinutos',
+          'horarioActualizadoEn', 'horarioActualizadoPor', 'actualizadoEn'
+        ]);
+    }
+
+    function minutosOperacionValidos(minutos) {
+      let cantidad = minutos.size();
+      return minutos is list && cantidad >= 1 && cantidad <= 20
+        && minutos[0] is string
+        && minutos[0].matches('^(0|[1-9][0-9]{0,3})$')
+        && int(minutos[0]) >= 420 && int(minutos[0]) < 1500
+        && int(minutos[0]) % 30 == 0
+        && (cantidad < 2 || int(minutos[1]) == int(minutos[0]) + 30)
+        && (cantidad < 3 || int(minutos[2]) == int(minutos[0]) + 60)
+        && (cantidad < 4 || int(minutos[3]) == int(minutos[0]) + 90)
+        && (cantidad < 5 || int(minutos[4]) == int(minutos[0]) + 120)
+        && (cantidad < 6 || int(minutos[5]) == int(minutos[0]) + 150)
+        && (cantidad < 7 || int(minutos[6]) == int(minutos[0]) + 180)
+        && (cantidad < 8 || int(minutos[7]) == int(minutos[0]) + 210)
+        && (cantidad < 9 || int(minutos[8]) == int(minutos[0]) + 240)
+        && (cantidad < 10 || int(minutos[9]) == int(minutos[0]) + 270)
+        && (cantidad < 11 || int(minutos[10]) == int(minutos[0]) + 300)
+        && (cantidad < 12 || int(minutos[11]) == int(minutos[0]) + 330)
+        && (cantidad < 13 || int(minutos[12]) == int(minutos[0]) + 360)
+        && (cantidad < 14 || int(minutos[13]) == int(minutos[0]) + 390)
+        && (cantidad < 15 || int(minutos[14]) == int(minutos[0]) + 420)
+        && (cantidad < 16 || int(minutos[15]) == int(minutos[0]) + 450)
+        && (cantidad < 17 || int(minutos[16]) == int(minutos[0]) + 480)
+        && (cantidad < 18 || int(minutos[17]) == int(minutos[0]) + 510)
+        && (cantidad < 19 || int(minutos[18]) == int(minutos[0]) + 540)
+        && (cantidad < 20 || int(minutos[19]) == int(minutos[0]) + 570)
+        && int(minutos[cantidad - 1]) < 1500;
+    }
+
+    function proyeccionCambiaIgual(n, cancha, dia, agendaAntes, agendaDespues) {
+      let ruta = rutaOcupacionPublica(n, cancha, dia);
+      let publicaDespues = getAfter(ruta).data;
+      return existsAfter(ruta)
+        && publicaDespues == {'ocupados': agendaDespues}
+        && (!exists(ruta)
+            && agendaAntes.size() == 0
+          || exists(ruta)
+            && publicaDespues.ocupados.diff(get(ruta).data.ocupados).affectedKeys()
+              == agendaDespues.diff(agendaAntes).affectedKeys());
+    }
+
+    function agendaDiaValida(n, cancha, dia, antes) {
+      let d = request.resource.data;
+      let op = d.ultimaOperacion;
+      let ruta = /databases/$(database)/documents/negocios/$(n)/$(op.coleccion)/$(op.reservaId);
+      let r = getAfter(ruta).data;
+      let cambio = d.ocupados.diff(antes).affectedKeys();
+      return d is map && d.size() == 2
+        && d.ocupados is map && d.ocupados.size() <= 36
+        && d.ocupados.values().hasOnly([true])
+        && op is map && op.size() == 4
+        && op.reservaId is string && op.coleccion in ['reservas', 'bloqueos']
+        && op.tipo in ['ocupar', 'liberar']
+        && minutosOperacionValidos(op.minutos)
+        && op.minutos == r.minutos
+        && r.schemaVersion == 5 && r.canchaId == cancha && r.dia == dia
+        && cambio.hasOnly(op.minutos) && cambio.hasAll(op.minutos)
+        && proyeccionCambiaIgual(n, cancha, dia, antes, d.ocupados)
+        && (op.tipo == 'ocupar'
+            && r.estado == 'confirmada'
+            && !antes.keys().hasAny(op.minutos)
+            && d.ocupados.keys().hasAll(op.minutos)
+            && (!exists(ruta)
+                && r.duracion <= 180
+              || exists(ruta)
+                && get(ruta).data.estado == 'pendiente'
+                && get(ruta).data.version + 1 == r.version
+                && r.duracion > 180
+                && puedeResolverCancha(n, cancha))
+          || op.tipo == 'liberar'
+            && r.estado == 'cancelada'
+            && exists(ruta)
+            && get(ruta).data.estado == 'confirmada'
+            && puedeResolverCancha(n, cancha)
+            && antes.keys().hasAll(op.minutos)
+            && !d.ocupados.keys().hasAny(op.minutos));
+    }
+
+    function agendaCambiaIgual(n, cancha, dia, publicaAntes, publicaDespues) {
+      let ruta = rutaAgendaDia(n, cancha, dia);
+      let agendaDespues = getAfter(ruta).data.ocupados;
+      return existsAfter(ruta)
+        && publicaDespues == agendaDespues
+        && (!exists(ruta)
+            && publicaAntes.size() == 0
+          || exists(ruta)
+            && agendaDespues.diff(get(ruta).data.ocupados).affectedKeys()
+              == publicaDespues.diff(publicaAntes).affectedKeys());
+    }
+
+    function ocupacionPublicaValida(n, cancha, dia, antes) {
+      let d = request.resource.data;
+      return d.keys().hasOnly(['ocupados'])
+        && d.ocupados is map && d.ocupados.size() <= 36
+        && d.ocupados.values().hasOnly([true])
+        && agendaCambiaIgual(n, cancha, dia, antes, d.ocupados);
+    }
+
+    match /sistema/grass {
+      allow get: if identidadPersonal();
+      allow create: if reclamoValido();
+      allow update, delete: if false;
+    }
+
+    match /users/{uid} {
+      allow get: if autenticado() && request.auth.uid == uid;
+      // La ficha propia se puede crear y completar en cualquier momento: sin
+      // negocio al verificarse, y con el negocio al fundarlo. El negocioId nunca
+      // se inventa: o falta, o es el confirmado o el que crea esta transaccion.
+      allow create: if ((verificado() && request.auth.uid == uid) || esAdministrador() || reclamoValido())
+        && (!('negocioId' in request.resource.data)
+          || request.resource.data.negocioId == null
+          || negocioCoincideReferencia(request.resource.data.negocioId));
+      allow update: if esAdministrador()
+        || reclamoValido()
+        || (verificado() && request.auth.uid == uid
+          && resource.data.negocioId == request.resource.data.negocioId
+          && (!('negocioId' in request.resource.data)
+            || request.resource.data.negocioId == null
+            || negocioCoincideReferencia(request.resource.data.negocioId)));
+      allow delete: if false;
+    }
+
+    match /negocios/{n} {
+      allow get: if puede(n, 'agenda');
+      allow list: if false;
+      allow create: if esAdministradorDe(n)
+        && request.resource.data.propietarioUid == request.auth.uid;
+      // El horario global solo lo cambia el administrador, y en la misma
+      // escritura queda proyectado a negocios_publicos.
+      allow update: if esAdministradorDe(n)
+        && resource.data.get('propietarioUid', '') == request.auth.uid
+        && request.resource.data.get('propietarioUid', '') == resource.data.get('propietarioUid', '')
+        && camposNegocioPermitidos(request.resource, resource)
+        && horarioValido(request.resource.data)
+        && horarioPublicoSincronizado(n, request.resource.data);
+      allow delete: if false;
+
+      match /sedes/{id} {
+        allow read: if puede(n, 'agenda');
+        allow create, update: if esAdministradorDe(n) && sedeValida(id);
+        allow delete: if false;
+      }
+
+      match /parametrosCanchas/{cancha}/dias/{dia} {
+        function puedeConfigurar() {
+          return esAdministradorDe(n) || (empleadoAsignado(n, cancha)
+            && get(/databases/$(database)/documents/negocios/$(n)/responsablesCanchas/$(cancha)).data.empleadoUid == request.auth.uid);
+        }
+        function valoresValidos(d) {
+          let b = d.bloque;
+          return sedeValida(cancha) && dia.matches('^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$')
+            && d.keys().hasAll(['bloque','plazoMinutos','version','eventoId','actualizadoPor','actualizadoEn'])
+            && d.keys().hasOnly(['bloque','plazoMinutos','version','eventoId','actualizadoPor','actualizadoEn'])
+            && b is map && b.keys().hasOnly(['desde','hasta','precioCentimos','adelantoCentimos'])
+            && b.desde is int && b.hasta is int && b.desde >= 420 && b.hasta <= 1500 && b.desde < b.hasta
+            && (b.desde-420)%60 == 0 && (b.hasta-420)%60 == 0
+            && b.precioCentimos is int && b.precioCentimos > 0 && b.precioCentimos <= 100000000
+            && b.adelantoCentimos is int && b.adelantoCentimos >= 0 && b.adelantoCentimos <= b.precioCentimos
+            && d.plazoMinutos is int && d.plazoMinutos >= 1 && d.plazoMinutos <= 120
+            && d.version is int && d.version == (exists(/databases/$(database)/documents/negocios/$(n)/parametrosCanchas/$(cancha)/dias/$(dia)) ? resource.data.version + 1 : 1)
+            && d.eventoId is string && d.actualizadoPor == request.auth.uid && d.actualizadoEn == request.time;
+        }
+        function auditado(d) {
+          let h = getAfter(/databases/$(database)/documents/negocios/$(n)/parametrosCanchas/$(cancha)/dias/$(dia)/historial/$(d.eventoId)).data;
+          return h.despues == {'bloque':d.bloque,'plazoMinutos':d.plazoMinutos} && h.version == d.version && h.actualizadoEn == request.time && h.actualizadoPor == request.auth.uid;
+        }
+        allow read: if puede(n,'agenda');
+        allow create, update: if puedeConfigurar() && valoresValidos(request.resource.data) && auditado(request.resource.data);
+        allow delete: if false;
+        match /historial/{evento} {
+          allow read: if puede(n,'agenda');
+          allow create: if puedeConfigurar()
+            && request.resource.data.keys().hasAll(['antes','despues','version','actualizadoPor','actualizadoEn'])
+            && request.resource.data.keys().hasOnly(['antes','despues','version','actualizadoPor','actualizadoEn'])
+            && request.resource.data.antes == (exists(/databases/$(database)/documents/negocios/$(n)/parametrosCanchas/$(cancha)/dias/$(dia)) ? {'bloque':get(/databases/$(database)/documents/negocios/$(n)/parametrosCanchas/$(cancha)/dias/$(dia)).data.bloque,'plazoMinutos':get(/databases/$(database)/documents/negocios/$(n)/parametrosCanchas/$(cancha)/dias/$(dia)).data.plazoMinutos} : {'bloque':null,'plazoMinutos':null})
+            && request.resource.data.actualizadoPor == request.auth.uid && request.resource.data.actualizadoEn == request.time
+            && getAfter(/databases/$(database)/documents/negocios/$(n)/parametrosCanchas/$(cancha)/dias/$(dia)).data.eventoId == evento
+            && request.resource.data.version == getAfter(/databases/$(database)/documents/negocios/$(n)/parametrosCanchas/$(cancha)/dias/$(dia)).data.version
+            && request.resource.data.despues == {'bloque':getAfter(/databases/$(database)/documents/negocios/$(n)/parametrosCanchas/$(cancha)/dias/$(dia)).data.bloque,'plazoMinutos':getAfter(/databases/$(database)/documents/negocios/$(n)/parametrosCanchas/$(cancha)/dias/$(dia)).data.plazoMinutos};
+          allow update, delete: if false;
+        }
+      }
+
+      match /responsablesCanchas/{cancha} {
+        function asignacionValida() {
+          let d = request.resource.data;
+          let e = get(/databases/$(database)/documents/negocios/$(n)/empleados/$(d.empleadoUid)).data;
+          let h = getAfter(/databases/$(database)/documents/negocios/$(n)/responsablesCanchas/$(cancha)/historial/$(d.eventoId)).data;
+          return sedeValida(cancha)
+            && d.keys().hasAll(['empleadoUid', 'actualizadoPor', 'actualizadoEn', 'eventoId'])
+            && d.keys().hasOnly(['empleadoUid', 'actualizadoPor', 'actualizadoEn', 'eventoId'])
+            && d.empleadoUid is string && d.eventoId is string
+            && d.actualizadoPor == request.auth.uid && d.actualizadoEn == request.time
+            && e.activo == true && e.permisos.reservas == true && cancha in e.sedes
+            && h.empleadoUid == d.empleadoUid && h.actualizadoEn == request.time;
+        }
+        allow read: if puede(n, 'agenda');
+        allow create, update: if esAdministradorDe(n) && asignacionValida();
+        allow delete: if false;
+        match /historial/{evento} {
+          allow read: if esAdministradorDe(n);
+          allow create: if esAdministradorDe(n)
+            && request.resource.data.keys().hasAll(['anteriorUid', 'empleadoUid', 'actualizadoPor', 'actualizadoEn'])
+            && request.resource.data.keys().hasOnly(['anteriorUid', 'empleadoUid', 'actualizadoPor', 'actualizadoEn'])
+            && request.resource.data.anteriorUid == (exists(/databases/$(database)/documents/negocios/$(n)/responsablesCanchas/$(cancha)) ? get(/databases/$(database)/documents/negocios/$(n)/responsablesCanchas/$(cancha)).data.empleadoUid : '')
+            && request.resource.data.actualizadoPor == request.auth.uid
+            && request.resource.data.actualizadoEn == request.time
+            && getAfter(/databases/$(database)/documents/negocios/$(n)/responsablesCanchas/$(cancha)).data.eventoId == evento
+            && getAfter(/databases/$(database)/documents/negocios/$(n)/responsablesCanchas/$(cancha)).data.empleadoUid == request.resource.data.empleadoUid;
+          allow update, delete: if false;
+        }
+      }
+
+      match /canchas/{id} {
+        allow read: if puede(n, 'agenda');
+        allow create: if esAdministradorDe(n) && sedeValida(id)
+          && request.resource.data.id == id
+          && request.resource.data.sedeId == id
+          && request.resource.data.activa == false
+          && request.resource.data.direccion == ''
+          && request.resource.data.tarifaTurnoCentimos == null;
+        // Direccion y tarifa pueden quedar pendientes sin impedir reservas.
+        allow update: if esAdministradorDe(n)
+          && resource.data.sedeId == id
+          && request.resource.data.sedeId == resource.data.sedeId
+          && request.resource.data.id == resource.data.id
+          && request.resource.data.activa is bool
+          && request.resource.data.direccion is string
+          && request.resource.data.direccion.size() <= 200
+          && (request.resource.data.tarifaTurnoCentimos == null
+            || (request.resource.data.tarifaTurnoCentimos is int
+              && request.resource.data.tarifaTurnoCentimos >= 0
+              && request.resource.data.tarifaTurnoCentimos <= 100000000))
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'nombre', 'direccion', 'activa', 'tarifaTurnoCentimos',
+            'actualizadoEn'
+          ])
+          && canchaPublicaSincronizada(n, id, request.resource.data);
+        allow delete: if false;
+      }
+
+      match /empleados/{uid} {
+        function whatsappValido() {
+          let w = request.resource.data.get('whatsappReservas', '');
+          return w is string && (w == '' || w.matches('^[+][1-9][0-9]{7,14}$'));
+        }
+        allow get: if esAdministradorDe(n)
+          || (autenticado() && request.auth.uid == uid);
+        allow list: if esAdministradorDe(n) && limite(100);
+        allow create: if esAdministradorDe(n)
+          && uid != request.auth.uid
+          && whatsappValido()
+          && request.resource.data.rol == 'empleado_control'
+          && request.resource.data.activo is bool
+          && request.resource.data.permisos.agenda == true
+          && request.resource.data.sedes is list
+          && request.resource.data.sedes.size() >= 1
+          && request.resource.data.sedes.size() <= 3
+          && request.resource.data.sedePrincipal in request.resource.data.sedes
+          && request.resource.data.nombre is string
+          && request.resource.data.nombre.size() > 0
+          && request.resource.data.nombre.size() <= 120;
+        allow update: if esAdministradorDe(n)
+          && whatsappValido()
+          && resource.data.rol == 'empleado_control'
+          && request.resource.data.rol == 'empleado_control'
+          && request.resource.data.permisos.agenda == true
+          && request.resource.data.sedes.size() >= 1
+          && request.resource.data.sedes.size() <= 3
+          && request.resource.data.sedePrincipal in request.resource.data.sedes;
+        allow delete: if false;
+      }
+
+      match /clientes/{id} {
+        allow get: if puede(n, 'clientes');
+        allow list: if puede(n, 'clientes') && limite(50);
+        allow create, update: if puede(n, 'clientes')
+          && request.resource.data.nombre is string
+          && request.resource.data.nombre.size() > 0
+          && request.resource.data.nombre.size() <= 120
+          && request.resource.data.nombreBusqueda is string
+          && request.resource.data.nombreBusqueda.size() <= 200
+          && request.resource.data.telefono is string
+          && request.resource.data.telefono.size() <= 24;
+        allow delete: if false;
+      }
+
+      match /promociones/{id} {
+        allow get: if puede(n, 'agenda');
+        allow list: if puede(n, 'agenda') && limite(100);
+        allow create, update: if puede(n, 'promociones')
+          && request.resource.data.titulo is string
+          && request.resource.data.titulo.size() > 0
+          && request.resource.data.titulo.size() <= 120
+          && request.resource.data.descripcion is string
+          && request.resource.data.descripcion.size() <= 1000
+          && request.resource.data.descuentoCentimos is int
+          && request.resource.data.descuentoCentimos >= 0
+          && request.resource.data.activa is bool
+          && request.resource.data.desde.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+          && request.resource.data.hasta.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+          && request.resource.data.desde <= request.resource.data.hasta
+          && request.resource.data.sedes is list
+          && request.resource.data.sedes.size() >= 1
+          && request.resource.data.sedes.size() <= 3
+          && promocionPublicaSincronizada(n, id, request.resource.data);
+        allow delete: if false;
+      }
+
+      match /clientesRegistrados/{uid} {
+        function fichaValida() {
+          let d = request.resource.data;
+          return (autenticado() && request.auth.token.firebase.sign_in_provider == 'google.com') && request.auth.uid == uid
+            && d.keys().hasOnly(['uid','email','nombre','telefono','creadoEn','actualizadoEn'])
+            && d.uid == uid && d.email == request.auth.token.email
+            && d.nombre is string && d.nombre.size() > 0 && d.nombre.size() <= 120
+            && d.telefono is string && d.telefono.matches('^[+][1-9][0-9]{9,14}$')
+            && d.actualizadoEn == request.time;
+        }
+        allow get: if ((autenticado() && request.auth.token.firebase.sign_in_provider == 'google.com') && request.auth.uid == uid) || puede(n,'clientes');
+        allow list: if puede(n,'clientes') && limite(50);
+        allow create: if fichaValida() && request.resource.data.creadoEn == request.time;
+        allow update: if fichaValida() && request.resource.data.creadoEn == resource.data.creadoEn;
+        allow delete: if false;
+      }
+
+      match /reservas/{id} {
+        allow get: if puede(n, 'agenda')
+          || (anonimo()
+            && (!exists(/databases/$(database)/documents/negocios/$(n)/reservas/$(id))
+              || resource.data.solicitanteUid == request.auth.uid));
+        allow list: if puede(n, 'agenda') && limite(1500);
+        allow create: if reservaValida(n, id, 'reservas');
+        allow update: if transicionValida(n, id, 'reservas') || efectivoValido(n);
+        allow delete: if false;
+      }
+
+      match /bloqueos/{id} {
+        allow get: if puede(n, 'agenda');
+        allow list: if puede(n, 'agenda') && limite(1500);
+        allow create: if reservaValida(n, id, 'bloqueos');
+        allow update: if transicionValida(n, id, 'bloqueos');
+        allow delete: if false;
+      }
+
+      match /agenda/{cancha}/dias/{dia} {
+        allow read: if puede(n, 'agenda');
+        allow create: if agendaDiaValida(n, cancha, dia, {});
+        allow update: if agendaDiaValida(n, cancha, dia, resource.data.ocupados);
+        allow delete: if false;
+      }
+    }
+
+    match /agenda_publica/{n}/canchas/{cancha}/dias/{dia} {
+      allow read: if true;
+      allow create: if ocupacionPublicaValida(n, cancha, dia, {});
+      allow update: if ocupacionPublicaValida(
+        n, cancha, dia, resource.data.ocupados);
+      allow delete: if false;
+    }
+
+    match /precios_publicos/{n}/canchas/{cancha}/dias/{dia}/bloques/{evento} {
+      allow read: if n == 'grass-sintetico' && sedeValida(cancha);
+      allow create: if puede(n, 'reservas')
+        && request.resource.data.keys().hasOnly(['bloque','plazoMinutos','version'])
+        && request.resource.data == {
+          'bloque': getAfter(/databases/$(database)/documents/negocios/$(n)/parametrosCanchas/$(cancha)/dias/$(dia)/historial/$(evento)).data.despues.bloque,
+          'plazoMinutos': getAfter(/databases/$(database)/documents/negocios/$(n)/parametrosCanchas/$(cancha)/dias/$(dia)/historial/$(evento)).data.despues.plazoMinutos,
+          'version': getAfter(/databases/$(database)/documents/negocios/$(n)/parametrosCanchas/$(cancha)/dias/$(dia)/historial/$(evento)).data.version
+        }
+        && getAfter(/databases/$(database)/documents/negocios/$(n)/parametrosCanchas/$(cancha)/dias/$(dia)).data.eventoId == evento;
+      allow update, delete: if false;
+    }
+    match /negocios/{n}/preferenciasReservas/{id} {
+      allow read: if puede(n,'agenda');
+      allow create: if request.auth != null
+        && request.resource.data.keys().hasOnly(['modalidad','solicitanteUid','reservaId','creadoEn'])
+        && request.resource.data.modalidad in ['completo','adelanto']
+        && request.resource.data.solicitanteUid == request.auth.uid
+        && request.resource.data.reservaId == id && request.resource.data.creadoEn == request.time
+        && getAfter(/databases/$(database)/documents/negocios/$(n)/reservas/$(id)).data.solicitanteUid == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    match /canchas_publicas/{id} {
+      allow read: if resource.data.activa == true;
+      allow create, update: if esAdministradorDe(request.resource.data.negocioId)
+        && sedeValida(id)
+        && request.resource.data.id == id
+        && request.resource.data.sedeId == id
+        && request.resource.data.keys().hasAll([
+          'id', 'negocioId', 'nombre', 'sedeId', 'direccion', 'activa',
+          'tarifaTurnoCentimos', 'actualizadoEn'
+        ])
+        && request.resource.data.keys().hasOnly([
+          'id', 'negocioId', 'nombre', 'sedeId', 'direccion', 'activa',
+          'tarifaTurnoCentimos', 'actualizadoEn'
+        ])
+        && existsAfter(/databases/$(database)/documents/negocios/$(request.resource.data.negocioId)/canchas/$(id))
+        && canchaPublicaSincronizada(
+          request.resource.data.negocioId,
+          id,
+          getAfter(/databases/$(database)/documents/negocios/$(request.resource.data.negocioId)/canchas/$(id)).data
+        );
+      allow delete: if false;
+    }
+
+    match /promociones_publicas/{id} {
+      allow read: if resource.data.activa == true;
+      allow create, update: if puede(request.resource.data.negocioId, 'promociones')
+        && request.resource.data.keys().hasAll([
+          'negocioId', 'titulo', 'descripcion', 'sedes', 'desde', 'hasta',
+          'activa', 'descuentoCentimos', 'actualizadoEn'
+        ])
+        && request.resource.data.keys().hasOnly([
+          'negocioId', 'titulo', 'descripcion', 'sedes', 'desde', 'hasta',
+          'activa', 'descuentoCentimos', 'actualizadoEn'
+        ])
+        && existsAfter(/databases/$(database)/documents/negocios/$(request.resource.data.negocioId)/promociones/$(id))
+        && promocionPublicaSincronizada(
+          request.resource.data.negocioId,
+          id,
+          getAfter(/databases/$(database)/documents/negocios/$(request.resource.data.negocioId)/promociones/$(id)).data
+        );
+      allow delete: if false;
+    }
+
+    match /negocios_publicos/{id} {
+      allow read: if true;
+      allow create, update: if esAdministradorDe(id)
+        && request.resource.data.negocioId == id
+        && request.resource.data.keys().hasAll([
+          'negocioId', 'slug', 'nombre', 'descripcion', 'galeria',
+          'aperturaMinuto', 'cierreMinuto', 'duracionTurnoMinutos'
+        ])
+        && request.resource.data.keys().hasOnly([
+          'negocioId', 'slug', 'nombre', 'descripcion', 'telefonoPublico',
+          'whatsapp', 'galeria', 'aperturaMinuto', 'cierreMinuto',
+          'duracionTurnoMinutos', 'horarioActualizadoEn',
+          'horarioActualizadoPor', 'actualizadoEn'
+        ])
+        && horarioValido(request.resource.data)
+        && existsAfter(/databases/$(database)/documents/negocios/$(id))
+        && horarioPublicoSincronizado(id, getAfter(
+          /databases/$(database)/documents/negocios/$(id)).data)
+        && request.resource.data.slug is string
+        && request.resource.data.slug.matches('^[a-z0-9][a-z0-9-]{2,49}$')
+        && request.resource.data.nombre is string
+        && request.resource.data.nombre.size() > 0
+        && request.resource.data.nombre.size() <= 120
+        && request.resource.data.descripcion is string
+        && request.resource.data.descripcion.size() <= 1000
+        && request.resource.data.get('telefonoPublico', '') is string
+        && request.resource.data.get('telefonoPublico', '').size() <= 40
+        && request.resource.data.get('whatsapp', '') is string
+        && request.resource.data.get('whatsapp', '').size() <= 40
+        && request.resource.data.galeria is list
+        && request.resource.data.galeria.size() <= 12;
+      allow delete: if false;
+    }
+
+  }
+}
