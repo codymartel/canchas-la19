@@ -1980,6 +1980,18 @@ test('precios públicos: proyección exacta sin datos privados', async () => {
  await assertFails(setDoc(doc(anon,'negocios/'+BUSINESS+'/preferenciasReservas/inexistente'),{modalidad:'adelanto',solicitanteUid:ANON_A,reservaId:'inexistente',creadoEn:serverTimestamp()}));
 });
 
+test('WhatsApp empleado: administrador valida, personal no cambia ni público lee', async () => {
+ await seedApplication();const admin=verified(ADMIN).firestore(),employee=verified(EMPLOYEE).firestore(),base='negocios/'+BUSINESS+'/empleados/'+EMPLOYEE;
+ await assertSucceeds(updateDoc(doc(admin,base),{whatsappReservas:'+51900000000'}));
+ await assertSucceeds(getDoc(doc(employee,base)));
+ for(const valor of ['abc','900000000','+00123456789',123])await assertFails(updateDoc(doc(admin,base),{whatsappReservas:valor}));
+ await assertFails(updateDoc(doc(employee,base),{whatsappReservas:'+51911111111'}));
+ await assertFails(getDoc(doc(anonymous(ANON_A).firestore(),base)));
+ await assertSucceeds(updateDoc(doc(admin,base),{whatsappReservas:''}));
+ await assertFails(setDoc(doc(admin,'negocios/'+BUSINESS+'/empleados/nuevo-whatsapp'),{...employeeRecord(),whatsappReservas:'mal'}));
+ await assertSucceeds(setDoc(doc(admin,'negocios/'+BUSINESS+'/empleados/nuevo-whatsapp'),{...employeeRecord(),whatsappReservas:'+51900000000'}));
+});
+
 let failures = 0;
 let skipped = 0;
 for (const [name, run, motivo] of tests) {

@@ -60,7 +60,7 @@ class EmpleadosScreen extends StatelessWidget {
                   subtitle: Text(
                     '${e.texto('email')}\n${e.texto('rol')} · principal: ${sedes[e.texto('sedePrincipal')] ?? 'Sin asignar'}\nAsignadas: ${(e.datos['sedes'] as List? ?? const []).join(', ')}\nPermisos: ${(e.datos['permisos'] as Map? ?? const {}).entries.where((p) => p.value == true).map((p) => p.key).join(', ')}',
                   ),
-                  isThreeLine: true,
+                  isThreeLine: false,
                   trailing: const Icon(Icons.edit),
                 ),
               ),
@@ -91,6 +91,9 @@ class _FormularioEmpleadoState extends State<_FormularioEmpleado> {
   late final email = TextEditingController(
     text: widget.empleado?.texto('email'),
   );
+  late final whatsapp = TextEditingController(
+    text: widget.empleado?.texto('whatsappReservas'),
+  );
   late final clave = TextEditingController();
   late var activo = widget.empleado?.datos['activo'] != false;
   late var principal = widget.empleado?.texto('sedePrincipal').isEmpty ?? true
@@ -109,12 +112,14 @@ class _FormularioEmpleadoState extends State<_FormularioEmpleado> {
     nombre.dispose();
     email.dispose();
     clave.dispose();
+    whatsapp.dispose();
     super.dispose();
   }
 
   Map<String, dynamic> _datos() => {
     'uid': widget.empleado?.id ?? '',
     'nombre': nombre.text,
+    'whatsappReservas': whatsapp.text,
     'email': email.text,
     'activo': activo,
     'sedes': asignadas.toList(),
@@ -129,6 +134,14 @@ class _FormularioEmpleadoState extends State<_FormularioEmpleado> {
       titulo: widget.alta ? 'Crear cuenta de empleado' : 'Editar empleado',
       children: [
         Campo('Nombre completo', nombre),
+        Campo(
+          'WhatsApp para recibir reservas',
+          whatsapp,
+          tipo: TextInputType.phone,
+        ),
+        const Text(
+          'Incluye el código de país, por ejemplo +51. Puede quedar pendiente; no se enviarán mensajes todavía.',
+        ),
         if (widget.alta) ...[
           Campo('Correo del empleado', email, tipo: TextInputType.emailAddress),
           Campo('Contrasena inicial', clave, secreto: true),
@@ -205,6 +218,7 @@ class _FormularioEmpleadoState extends State<_FormularioEmpleado> {
                           sedes: asignadas.toList(),
                           sedePrincipal: principal,
                           activo: activo,
+                          whatsappReservas: whatsapp.text,
                         )
                       : await p.guardar(_datos());
                   if (ok && context.mounted) Navigator.pop(context);
@@ -267,7 +281,7 @@ class _ResponsablesCanchas extends StatelessWidget {
                     .firstOrNull;
                 return e == null
                     ? 'Sin principal designado'
-                    : '${e.texto('nombre')}${e.activo('activo') ? '' : ' · Inactivo: revisar asignación'}';
+                    : '${e.texto('nombre')}${e.activo('activo') ? '' : ' · Inactivo: revisar asignación'}\nWhatsApp: ${e.texto('whatsappReservas').isEmpty ? 'Pendiente de configurar' : e.texto('whatsappReservas')}';
               }()),
               trailing: TextButton(
                 child: const Text('Asignar'),

@@ -239,3 +239,7 @@ El administrador puede designar un empleado activo, con permiso de reservas y la
 ### Precios públicos y preferencias de pago (4 de octubre de 2026)
 
 Los nuevos ajustes de parámetros proyectan solo bloque, plazo y versión a `precios_publicos/{negocio}/canchas/{cancha}/dias/{dia}/bloques/{evento}`. La web reconstruye por versión y suma precios y adelantos por hora elegida; un dato faltante impide calcular, sin inventar tarifas. La preferencia completo/adelanto se conserva en `preferenciasReservas/{reservaId}` de forma privada, vinculada a la reserva y su solicitante. No acredita pago ni convierte el cálculo en un monto contable; las altas públicas conservan importes cero. Vencimiento, WhatsApp, Yape y Culqi siguen pendientes. Esta sección actualiza la descripción anterior que indicaba parámetros exclusivamente internos.
+
+### WhatsApp privado del empleado
+
+La ficha privada de empleados admite `whatsappReservas` vacío o normalizado con código internacional. Alta y edición lo validan; solo el administrador puede cambiarlo. La vista Empleado principal por cancha toma el número de la ficha del UID designado, sin duplicarlo ni exponerlo a la web pública. Este cambio prepara la coordinación futura, sin enviar mensajes ni activar vencimientos.

@@ -27,8 +27,16 @@ class EmpleadosProvider extends Operacion {
     required List<String> sedes,
     required String sedePrincipal,
     required bool activo,
+    String whatsappReservas = '',
   }) async {
     if (ocupado) return false;
+    try {
+      normalizarWhatsappEmpleado(whatsappReservas);
+    } on FormatException catch (e) {
+      error = e.message;
+      notificar();
+      return false;
+    }
     ocupado = true;
     error = null;
     aviso = null;
@@ -49,6 +57,7 @@ class EmpleadosProvider extends Operacion {
         sedes: sedes,
         sedePrincipal: sedePrincipal,
         activo: activo,
+        whatsappReservas: whatsappReservas,
       );
       if (registro.esError) {
         error =

@@ -703,11 +703,16 @@ service cloud.firestore {
       }
 
       match /empleados/{uid} {
+        function whatsappValido() {
+          let w = request.resource.data.get('whatsappReservas', '');
+          return w is string && (w == '' || w.matches('^[+][1-9][0-9]{7,14}$'));
+        }
         allow get: if esAdministradorDe(n)
           || (autenticado() && request.auth.uid == uid);
         allow list: if esAdministradorDe(n) && limite(100);
         allow create: if esAdministradorDe(n)
           && uid != request.auth.uid
+          && whatsappValido()
           && request.resource.data.rol == 'empleado_control'
           && request.resource.data.activo is bool
           && request.resource.data.permisos.agenda == true
@@ -719,6 +724,7 @@ service cloud.firestore {
           && request.resource.data.nombre.size() > 0
           && request.resource.data.nombre.size() <= 120;
         allow update: if esAdministradorDe(n)
+          && whatsappValido()
           && resource.data.rol == 'empleado_control'
           && request.resource.data.rol == 'empleado_control'
           && request.resource.data.permisos.agenda == true

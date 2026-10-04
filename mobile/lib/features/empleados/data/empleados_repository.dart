@@ -4,6 +4,24 @@ import '../../../core/domain/formatos.dart';
 import '../../../core/domain/negocio.dart';
 import '../../../core/domain/resultado.dart';
 
+String normalizarWhatsappEmpleado(String valor) {
+  var numero = valor.trim().replaceAll(RegExp(r'[\s().-]'), '');
+  if (numero.isEmpty) return '';
+  if (RegExp(r'^9[0-9]{8}$').hasMatch(numero)) {
+    numero = '+51$numero';
+  }
+  if (!numero.startsWith('+') &&
+      RegExp(r'^[1-9][0-9]{9,14}$').hasMatch(numero)) {
+    numero = '+$numero';
+  }
+  if (!RegExp(r'^\+[1-9][0-9]{7,14}$').hasMatch(numero)) {
+    throw const FormatException(
+      'WhatsApp inválido. Usa +51 y el número, o incluye el código de tu país.',
+    );
+  }
+  return numero;
+}
+
 class AltaEmpleado {
   final String uid, email, nombre;
   const AltaEmpleado({
@@ -112,6 +130,7 @@ class EmpleadosRepository {
     required List<String> sedes,
     required String sedePrincipal,
     required bool activo,
+    String whatsappReservas = '',
   }) => servicios.guardando(() async {
     if (uid == uidAdministrador) {
       throw const FormatException('No puedes crear un empleado con tu UID.');
@@ -133,6 +152,7 @@ class EmpleadosRepository {
     final usuario = servicios.db.doc('users/$uid');
     final lote = servicios.db.batch();
     lote.set(ficha, {
+      'whatsappReservas': normalizarWhatsappEmpleado(whatsappReservas),
       'nombre': nombre.trim(),
       'email': email.trim().toLowerCase(),
       'rol': 'empleado_control',
@@ -174,9 +194,13 @@ class EmpleadosRepository {
         if (permisos['agenda'] != true) {
           throw const FormatException('La agenda global es obligatoria.');
         }
+        final whatsapp = datos.containsKey('whatsappReservas')
+            ? normalizarWhatsappEmpleado('${datos['whatsappReservas'] ?? ''}')
+            : null;
         final activo = datos['activo'] == true;
         if (!activo) await _revocarPresencia(uid);
         await servicios.doc(negocio, 'empleados', uid).set({
+          'whatsappReservas': ?whatsapp,
           'nombre': '${datos['nombre']}'.trim(),
           'email': '${datos['email']}'.trim().toLowerCase(),
           'rol': 'empleado_control',
