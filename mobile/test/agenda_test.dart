@@ -155,6 +155,7 @@ void main() {
       final sr = SedesRepo(), cr = ClientesRepo();
       stubSedes(sr, canchas: const [canchaReservable, canchaIncompleta]);
       final sp = SedesProvider(sr), cp = ClientesProvider(cr);
+      final presenciaEnVivo = PresenciaFake();
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
@@ -164,24 +165,43 @@ void main() {
               clientes: cp,
               puedeEscribir: true,
               puedeClientes: true,
-              presencia: PresenciaFake(),
+              presencia: presenciaEnVivo,
               nombrePersonal: 'Ana',
             ),
           ),
         ),
       );
       await tester.pumpAndSettle();
-      expect(
-        find.text('Sin reservas ni bloqueos para este día.'),
-        findsOneWidget,
-      );
-      expect(find.text('Tabla La 19'), findsOneWidget);
-      expect(find.text('Tabla La 23'), findsOneWidget);
-      expect(find.text('Tabla La 24'), findsOneWidget);
-      expect(find.text('Abrir La 19'), findsOneWidget);
-      expect(find.text('Abrir La 23'), findsOneWidget);
-      expect(find.text('Abrir La 24'), findsOneWidget);
-      expect(find.text('Planilla diaria de 18 horas'), findsNWidgets(3));
+      expect(find.textContaining('Tabla La 19'), findsOneWidget);
+      expect(find.byKey(const ValueKey('cancha-la-23')), findsOneWidget);
+      expect(find.byKey(const ValueKey('cancha-la-24')), findsOneWidget);
+      expect(find.text('07:00 – 08:00'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('cancha-la-23')));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Tabla La 23'), findsOneWidget);
+      expect(find.byType(Dialog), findsNothing);
+      await tester.tap(find.byKey(const ValueKey('cancha-la-24')));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Tabla La 24'), findsOneWidget);
+      presenciaEnVivo.actividades = [
+        Actividad(
+          uid: 'u-local',
+          sesionId: 's-local',
+          canchaId: 'la-24',
+          dia: provider.dia,
+          nombre: 'Empleado local',
+          estado: 'preparando',
+          minuto: 420,
+          expiraEn: DateTime.now().millisecondsSinceEpoch + 60000,
+        ),
+      ];
+      presenciaEnVivo.notifyListeners();
+      await tester.pumpAndSettle();
+      expect(find.text('Empleado local · preparando'), findsOneWidget);
+      presenciaEnVivo.actividades = [];
+      presenciaEnVivo.notifyListeners();
+      await tester.pumpAndSettle();
+      expect(find.text('Empleado local · preparando'), findsNothing);
       expect(tester.takeException(), isNull);
       await tester.tap(find.text('Reserva'));
       await tester.pumpAndSettle();
@@ -357,13 +377,12 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Abrir La 19'));
-      await tester.pumpAndSettle();
       expect(find.textContaining('Cliente de prueba'), findsWidgets);
       expect(find.textContaining('10:30 – 11:00'), findsOneWidget);
       expect(find.text('Monto a pagar'), findsOneWidget);
       expect(find.text('Adelanto'), findsOneWidget);
       expect(find.text('10:00 – 11:00'), findsOneWidget);
+      await tester.ensureVisible(find.text('10:00 – 11:00'));
       await tester.tap(find.text('10:00 – 11:00'));
       await tester.pumpAndSettle();
       expect(find.text('Elegir reserva de esta hora'), findsOneWidget);
@@ -372,7 +391,10 @@ void main() {
       await tester.tap(find.text('Cerrar'));
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byTooltip('Cerrar planilla'));
+      await tester.tap(find.byKey(const ValueKey('cancha-la-23')));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Cliente de prueba'), findsNothing);
+      await tester.tap(find.byKey(const ValueKey('cancha-la-19')));
       await tester.pumpAndSettle();
       expect(find.text('Reserva'), findsNothing);
       expect(tester.takeException(), isNull);
@@ -464,7 +486,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Conectado en vivo'), findsOneWidget);
     expect(
-      find.text('Ana está preparando este horario · 19:00'),
+      find.text('En preparación'),
       findsOneWidget,
     );
     expect(tester.takeException(), isNull);
