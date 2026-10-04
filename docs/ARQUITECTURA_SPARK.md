@@ -227,3 +227,7 @@ Hasta que exista un backend de pagos, los importes no se gestionan: `montoCentim
 ### Debilidad conocida
 
 El documento publico admite una reescritura identica: si el mapa enviado coincide byte a byte con el de la agenda privada, los dos diffs quedan vacios y la regla los da por iguales. No fabrica ocupacion, no altera estado y no filtra informacion, porque ese documento ya es legible por cualquiera. Se deja constancia en vez de ocultarlo.
+
+### Empleado principal por cancha
+
+El administrador puede designar un empleado activo, con permiso de reservas y la cancha incluida en sus sedes, en `negocios/{negocio}/responsablesCanchas/{cancha}`. Este documento privado guarda `empleadoUid`, `actualizadoPor`, `actualizadoEn` y `eventoId`. Cada cambio crea un evento inmutable en `historial/{eventoId}` con empleado anterior y nuevo. Responsable y evento se escriben en la misma transacción y se validan con `getAfter`; no hay asignaciones automáticas ni migración de reservas. La designación prepara el enrutamiento futuro; no cambia los permisos operativos existentes ni activa WhatsApp o pagos.

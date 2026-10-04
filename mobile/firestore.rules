@@ -604,6 +604,36 @@ service cloud.firestore {
         allow delete: if false;
       }
 
+      match /responsablesCanchas/{cancha} {
+        function asignacionValida() {
+          let d = request.resource.data;
+          let e = get(/databases/$(database)/documents/negocios/$(n)/empleados/$(d.empleadoUid)).data;
+          let h = getAfter(/databases/$(database)/documents/negocios/$(n)/responsablesCanchas/$(cancha)/historial/$(d.eventoId)).data;
+          return sedeValida(cancha)
+            && d.keys().hasAll(['empleadoUid', 'actualizadoPor', 'actualizadoEn', 'eventoId'])
+            && d.keys().hasOnly(['empleadoUid', 'actualizadoPor', 'actualizadoEn', 'eventoId'])
+            && d.empleadoUid is string && d.eventoId is string
+            && d.actualizadoPor == request.auth.uid && d.actualizadoEn == request.time
+            && e.activo == true && e.permisos.reservas == true && cancha in e.sedes
+            && h.empleadoUid == d.empleadoUid && h.actualizadoEn == request.time;
+        }
+        allow read: if puede(n, 'agenda');
+        allow create, update: if esAdministradorDe(n) && asignacionValida();
+        allow delete: if false;
+        match /historial/{evento} {
+          allow read: if esAdministradorDe(n);
+          allow create: if esAdministradorDe(n)
+            && request.resource.data.keys().hasAll(['anteriorUid', 'empleadoUid', 'actualizadoPor', 'actualizadoEn'])
+            && request.resource.data.keys().hasOnly(['anteriorUid', 'empleadoUid', 'actualizadoPor', 'actualizadoEn'])
+            && request.resource.data.anteriorUid == (exists(/databases/$(database)/documents/negocios/$(n)/responsablesCanchas/$(cancha)) ? get(/databases/$(database)/documents/negocios/$(n)/responsablesCanchas/$(cancha)).data.empleadoUid : '')
+            && request.resource.data.actualizadoPor == request.auth.uid
+            && request.resource.data.actualizadoEn == request.time
+            && getAfter(/databases/$(database)/documents/negocios/$(n)/responsablesCanchas/$(cancha)).data.eventoId == evento
+            && getAfter(/databases/$(database)/documents/negocios/$(n)/responsablesCanchas/$(cancha)).data.empleadoUid == request.resource.data.empleadoUid;
+          allow update, delete: if false;
+        }
+      }
+
       match /canchas/{id} {
         allow read: if puede(n, 'agenda');
         allow create: if esAdministradorDe(n) && sedeValida(id)

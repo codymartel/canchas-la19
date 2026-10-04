@@ -90,20 +90,6 @@ class AgendaScreen extends StatelessWidget {
                     }
                   },
                 ),
-                DropdownButton<String>(
-                  value: provider.sede,
-                  items: [
-                    const DropdownMenuItem(
-                      value: '',
-                      child: Text('Todas las canchas'),
-                    ),
-                    ...sedes.entries.map(
-                      (s) =>
-                          DropdownMenuItem(value: s.key, child: Text(s.value)),
-                    ),
-                  ],
-                  onChanged: (s) => provider.seleccionarSede(s!),
-                ),
                 if (puedeEscribir)
                   FilledButton.icon(
                     onPressed: () => nueva(context),
@@ -198,9 +184,6 @@ class AgendaScreen extends StatelessWidget {
                           ),
                         ),
                     ],
-                  ),
-                  const Text(
-                    'Estados: libre · personal preparando (temporal) · guardando · pendiente · confirmada.',
                   ),
                 ],
               ),
@@ -304,106 +287,120 @@ class _HojaCancha extends StatelessWidget {
       final conMonto = reservas
           .where((r) => !r.bloqueo && r.monto > 0)
           .toList();
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(12),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    'Tabla ${sedes[cancha]} · ${provider.dia} · America/Lima',
-                    style: Theme.of(context).textTheme.titleLarge,
+      return Container(
+        margin: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surface,
+          border: Border.all(color: Theme.of(context).dividerColor),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Tabla ${sedes[cancha]} · ${provider.dia} · America/Lima',
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 12),
-            child: Text(
-              '07:00 a 01:00 del día siguiente · Registro interno; pagos no verificados. Toca una reserva para ver su detalle.',
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 12),
+              child: Text('07:00–01:00 (+1 día) · Registro interno'),
             ),
-          ),
-          Expanded(
-            child: SingleChildScrollView(
+            Expanded(
               child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: DataTable(
-                  columnSpacing: 20,
-                  horizontalMargin: 12,
-                  dataRowMinHeight: 40,
-                  dataRowMaxHeight: 40,
-                  columns: [
-                    for (final titulo in [
-                      'Hora',
-                      'Nombre / estado',
-                      'Monto a pagar',
-                      'Teléfono',
-                      'Adelanto',
-                      'Resta',
-                      'Total registrado',
-                      'Quién atiende',
-                    ])
-                      DataColumn(label: Text(titulo)),
-                  ],
-                  rows: [
-                    for (
-                      var minuto = horario.apertura;
-                      minuto < limite;
-                      minuto += 60
-                    )
-                      _fila(context, minuto, reservas),
-                  ],
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: DataTable(
+                    border: TableBorder.all(
+                      color: Theme.of(context).dividerColor,
+                      width: .6,
+                    ),
+                    headingRowColor: WidgetStatePropertyAll(
+                      Theme.of(context).colorScheme.surfaceContainerLow,
+                    ),
+                    columnSpacing: 20,
+                    horizontalMargin: 12,
+                    dataRowMinHeight: 40,
+                    dataRowMaxHeight: 40,
+                    columns: [
+                      for (final titulo in [
+                        'Hora',
+                        'Nombre / estado',
+                        'Monto a pagar',
+                        'Teléfono',
+                        'Adelanto',
+                        'Resta',
+                        'Total registrado',
+                        'Quién atiende',
+                      ])
+                        DataColumn(label: Text(titulo)),
+                    ],
+                    rows: [
+                      for (
+                        var minuto = horario.apertura;
+                        minuto < limite;
+                        minuto += 60
+                      )
+                        _fila(context, minuto, reservas),
+                    ],
+                  ),
                 ),
               ),
             ),
-          ),
-          if (todas.any((r) => !r.ocupa))
-            TextButton(
-              onPressed: () => showDialog<void>(
-                context: context,
-                builder: (_) => AlertDialog(
-                  title: const Text('Solicitudes y reservas sin ocupación'),
-                  content: SizedBox(
-                    width: 600,
-                    child: SingleChildScrollView(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          for (final r in todas.where((r) => !r.ocupa))
-                            ListTile(
-                              title: Text(
-                                '${r.texto('clienteNombre')} · ${r.estado}',
+            if (todas.any((r) => !r.ocupa))
+              TextButton(
+                onPressed: () => showDialog<void>(
+                  context: context,
+                  builder: (_) => AlertDialog(
+                    title: const Text('Solicitudes y reservas sin ocupación'),
+                    content: SizedBox(
+                      width: 600,
+                      child: SingleChildScrollView(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            for (final r in todas.where((r) => !r.ocupa))
+                              ListTile(
+                                title: Text(
+                                  '${r.texto('clienteNombre')} · ${r.estado}',
+                                ),
+                                subtitle: Text(
+                                  'Efectivo registrado: ${soles(r.adelanto)}',
+                                ),
+                                onTap: () => onDetalle(r),
                               ),
-                              subtitle: Text(
-                                'Efectivo registrado: ${soles(r.adelanto)}',
-                              ),
-                              onTap: () => onDetalle(r),
-                            ),
-                        ],
+                          ],
+                        ),
                       ),
                     ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text('Cerrar'),
+                      ),
+                    ],
                   ),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.pop(context),
-                      child: const Text('Cerrar'),
-                    ),
-                  ],
                 ),
+                child: const Text('Ver canceladas y solicitudes'),
               ),
-              child: const Text('Ver canceladas y solicitudes'),
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Text(
+                'Monto ${soles(conMonto.fold<int>(0, (n, r) => n + r.monto))} · Efectivo ${soles(todas.fold<int>(0, (n, r) => n + r.adelanto))} · Saldo ${soles(conMonto.fold<int>(0, (n, r) => n + r.saldo))}'
+                '${reservas.any((r) => !r.bloqueo && r.monto == 0) ? ' · Hay tarifas pendientes.' : ''}',
+              ),
             ),
-          Padding(
-            padding: const EdgeInsets.all(12),
-            child: Text(
-              'Totales del día (cada reserva se cuenta una vez): monto ${soles(conMonto.fold<int>(0, (n, r) => n + r.monto))} · efectivo registrado ${soles(todas.fold<int>(0, (n, r) => n + r.adelanto))} · resta ${soles(conMonto.fold<int>(0, (n, r) => n + r.saldo))}'
-              '${reservas.any((r) => !r.bloqueo && r.monto == 0) ? ' · Hay tarifas pendientes.' : ''}',
-            ),
-          ),
-        ],
+          ],
+        ),
       );
     },
   );

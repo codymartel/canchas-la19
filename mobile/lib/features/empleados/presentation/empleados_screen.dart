@@ -49,6 +49,7 @@ class EmpleadosScreen extends StatelessWidget {
           children: [
             if (lista.isEmpty)
               const ListTile(title: Text('No hay empleados dados de alta.')),
+            _ResponsablesCanchas(provider: provider, empleados: lista),
             for (final e in lista)
               Card(
                 child: ListTile(
@@ -236,4 +237,138 @@ class AltaEmpleadoDialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) =>
       _FormularioEmpleado(provider: provider, alta: true);
+}
+
+class _ResponsablesCanchas extends StatelessWidget {
+  final EmpleadosProvider provider;
+  final List<Registro> empleados;
+  const _ResponsablesCanchas({required this.provider, required this.empleados});
+  @override
+  Widget build(BuildContext context) => ListaDatos(
+    stream: provider.responsables,
+    builder: (context, responsables) => Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          'Empleado principal por cancha',
+          style: Theme.of(context).textTheme.titleLarge,
+        ),
+        const Text(
+          'Selecciona un empleado activo con permiso de reservas y esta cancha asignada. No modifica las reservas anteriores ni los permisos de otros empleados.',
+        ),
+        for (final cancha in sedesIds)
+          Card(
+            child: ListTile(
+              title: Text(sedes[cancha]!),
+              subtitle: Text(() {
+                final r = responsables.where((r) => r.id == cancha).firstOrNull;
+                final e = empleados
+                    .where((e) => e.id == r?.texto('empleadoUid'))
+                    .firstOrNull;
+                return e == null
+                    ? 'Sin principal designado'
+                    : '${e.texto('nombre')}${e.activo('activo') ? '' : ' · Inactivo: revisar asignación'}';
+              }()),
+              trailing: TextButton(
+                child: const Text('Asignar'),
+                onPressed: () => showDialog<void>(
+                  context: context,
+                  builder: (_) => _AsignarPrincipal(
+                    provider: provider,
+                    cancha: cancha,
+                    empleados: empleados,
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
+    ),
+  );
+}
+
+class _AsignarPrincipal extends StatefulWidget {
+  final EmpleadosProvider provider;
+  final String cancha;
+  final List<Registro> empleados;
+  const _AsignarPrincipal({
+    required this.provider,
+    required this.cancha,
+    required this.empleados,
+  });
+  @override
+  State<_AsignarPrincipal> createState() => _AsignarPrincipalState();
+}
+
+class _AsignarPrincipalState extends State<_AsignarPrincipal> {
+  String? uid;
+  @override
+  Widget build(BuildContext context) {
+    final disponibles = widget.empleados
+        .where(
+          (e) =>
+              e.activo('activo') &&
+              (e.datos['permisos'] as Map?)?['reservas'] == true &&
+              (e.datos['sedes'] as List? ?? []).contains(widget.cancha),
+        )
+        .toList();
+    return AlertDialog(
+      title: Text('Principal de ${sedes[widget.cancha]}'),
+      content: SizedBox(
+        width: 440,
+        child: ListenableBuilder(
+          listenable: widget.provider,
+          builder: (context, _) => Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (disponibles.isEmpty)
+                const Text(
+                  'No hay empleados elegibles. Edita sus canchas y permiso de reservas primero.',
+                ),
+              if (disponibles.isNotEmpty)
+                DropdownButton<String>(
+                  isExpanded: true,
+                  value: uid,
+                  hint: const Text('Seleccionar empleado'),
+                  items: disponibles
+                      .map(
+                        (e) => DropdownMenuItem(
+                          value: e.id,
+                          child: Text(e.texto('nombre')),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: widget.provider.ocupado
+                      ? null
+                      : (v) => setState(() => uid = v),
+                ),
+              if (widget.provider.error != null)
+                Aviso(widget.provider.error!, grave: true),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancelar'),
+        ),
+        ListenableBuilder(
+          listenable: widget.provider,
+          builder: (context, _) => FilledButton(
+            onPressed: uid == null || widget.provider.ocupado
+                ? null
+                : () async {
+                    final ok = await widget.provider.asignarPrincipal(
+                      widget.cancha,
+                      uid!,
+                    );
+                    if (ok && context.mounted) Navigator.pop(context);
+                  },
+            child: const Text('Guardar principal'),
+          ),
+        ),
+      ],
+    );
+  }
 }

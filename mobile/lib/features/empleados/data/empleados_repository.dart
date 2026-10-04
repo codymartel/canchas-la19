@@ -22,6 +22,46 @@ class EmpleadosRepository {
   Stream<List<Registro>> empleados() =>
       observar(servicios.coleccion(negocio, 'empleados').limit(100));
 
+  Stream<List<Registro>> responsables() =>
+      observar(servicios.coleccion(negocio, 'responsablesCanchas'));
+
+  Future<Resultado<void>> asignarPrincipal(
+    String cancha,
+    String uid,
+  ) => servicios.guardando(() async {
+    if (!esSede(cancha) || uid.isEmpty) {
+      throw const FormatException('Selecciona cancha y empleado.');
+    }
+    final ref = servicios.doc(negocio, 'responsablesCanchas', cancha);
+    await servicios.db.runTransaction((tx) async {
+      final empleado = await tx.get(servicios.doc(negocio, 'empleados', uid));
+      final anterior = await tx.get(ref);
+      final e = empleado.data();
+      if (e == null ||
+          e['activo'] != true ||
+          (e['permisos'] as Map?)?['reservas'] != true ||
+          !(e['sedes'] as List? ?? []).contains(cancha)) {
+        throw const FormatException(
+          'El empleado debe estar activo, asignado a esta cancha y tener permiso de reservas.',
+        );
+      }
+      if (anterior.data()?['empleadoUid'] == uid) return;
+      final evento = ref.collection('historial').doc();
+      tx.set(evento, {
+        'anteriorUid': anterior.data()?['empleadoUid'] ?? '',
+        'empleadoUid': uid,
+        'actualizadoPor': servicios.uid,
+        'actualizadoEn': FieldValue.serverTimestamp(),
+      });
+      tx.set(ref, {
+        'empleadoUid': uid,
+        'actualizadoPor': servicios.uid,
+        'actualizadoEn': FieldValue.serverTimestamp(),
+        'eventoId': evento.id,
+      });
+    });
+  });
+
   Future<void> _autorizarPresencia(String uid, String nombre) =>
       servicios.realtime.ref('acceso/$negocio/$uid').set({
         'rol': 'empleado_control',

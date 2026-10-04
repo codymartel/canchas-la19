@@ -1913,6 +1913,30 @@ test('efectivo: 100 movimientos conservan historial sin agotar expresiones', asy
   const r=(await getDoc(b.ref)).data();await assertFails(updateDoc(b.ref,efectivoPatch(r,1,10000,EMPLOYEE,'efectivo-operacion-0101')));
 });
 
+
+test('principal: solo administrador, empleado elegible e historial inmutable', async () => {
+  await seedApplication();
+  const db = verified(ADMIN).firestore();
+  const base = 'negocios/'+BUSINESS+'/responsablesCanchas/'+COURT;
+  async function asignar(client, uid, id, anterior = '') {
+    const batch = writeBatch(client);
+    batch.set(doc(client,base), {empleadoUid:uid, actualizadoPor:ADMIN, actualizadoEn:serverTimestamp(), eventoId:id});
+    batch.set(doc(client,base+'/historial/'+id), {anteriorUid:anterior, empleadoUid:uid, actualizadoPor:ADMIN, actualizadoEn:serverTimestamp()});
+    return batch.commit();
+  }
+  await assertFails(asignar(verified(EMPLOYEE).firestore(),EMPLOYEE,'no-admin'));
+  await assertFails(asignar(db,DEACTIVATED,'inactivo'));
+  await assertFails(asignar(db,NO_RESERVATIONS,'sin-permiso'));
+  await assertFails(asignar(db,UNLINKED,'sin-vinculo'));
+  await assertFails(setDoc(doc(db,base),{empleadoUid:EMPLOYEE,actualizadoPor:ADMIN,actualizadoEn:serverTimestamp(),eventoId:'sin-historial'}));
+  await assertSucceeds(asignar(db,EMPLOYEE,'correcto'));
+  await assertSucceeds(getDoc(doc(verified(EMPLOYEE).firestore(),base)));
+  await assertFails(getDoc(doc(anonymous(ANON_A).firestore(),base)));
+  await assertFails(updateDoc(doc(db,base+'/historial/correcto'),{anteriorUid:'alterado'}));
+  await assertFails(deleteDoc(doc(db,base+'/historial/correcto')));
+  await assertFails(asignar(db,EMPLOYEE,'falso-anterior','otro'));
+});
+
 let failures = 0;
 let skipped = 0;
 for (const [name, run, motivo] of tests) {

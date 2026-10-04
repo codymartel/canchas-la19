@@ -9,6 +9,10 @@ class EmpleadosProvider extends Operacion {
   AltaEmpleado? creado;
   EmpleadosProvider(this.repository);
 
+  late final Stream<List<Registro>> responsables = repository.responsables();
+  Future<bool> asignarPrincipal(String cancha, String uid) =>
+      conResultado(() => repository.asignarPrincipal(cancha, uid));
+
   Future<bool> guardar(Map<String, dynamic> datos) =>
       conResultado(() => repository.guardar(datos));
 
