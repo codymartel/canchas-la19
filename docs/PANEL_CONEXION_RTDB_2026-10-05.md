@@ -72,3 +72,40 @@ firebase deploy --project glass-sintetico --only hosting:personal
 El bundle no vive en Git: `mobile/.gitignore` excluye `/build/`. El artefacto desplegado se reproduce con los tres comandos de arriba, pero no queda guardado en el repositorio. Conviene conservar una copia del bundle por versión en un almacén externo, porque un build roto en Git es indescifrable.
 
 Tampoco hay ninguna prueba que detecte este fallo. `flutter test` corre en la VM, donde el plugin real está presente, así que las 52 pruebas pasan aunque el shim de JavaScript no se compile. Falta una comprobación que verifique que el bundle web incluye los plugins web.
+
+## Guardia añadida: `mobile/test/bundle_web_test.dart`
+
+Cuatro pruebas que miran el artefacto compilado, no el código Dart. Marcadas con la etiqueta `bundle` para poder saltarlas sin compilar.
+
+1. El bundle enlaza `.firebase_database`. Es el discriminante que faltaba: el bundle sano lo tiene 11 veces y el roto 0. El enlace es literally la llamada de interoperabilidad con JavaScript:
+   ```js
+   r = v.G.firebase_database;  // libreria de interoperabilidad
+   s = r.getDatabase(p.a, s);  // llamada al SDK
+   ```
+2. Enlaza `.firebase_core`, `.firebase_auth` y `.firebase_firestore`.
+3. Un bundle de release no menciona `demo-grass-local` ni `demo-key`, y sí menciona `glass-sintetico-default-rtdb`.
+4. `index.html` no referencia `flutter_service_worker.js`, para que la estrategia PWA none no se pierda por descuido.
+
+Comprobado que la guardia sirve: sustituyendo el bundle sano por el roto, la prueba 1 falla con
+
+```
+Expected: true
+Actual: <false>
+El bundle no enlaza la libreria de interoperabilidad .firebase_database...
+```
+
+y las otras tres siguen pasando, porque el bundle roto solo perdió RTDB.
+
+Con el bundle sano en su sitio, la suite completa da 56 de 56. Para correr solo las unitarias sin compilar antes:
+
+```
+flutter test --exclude-tags=bundle
+```
+
+Antes de publicar el panel, la comprobacion es:
+
+```
+flutter build web --release
+flutter test
+firebase deploy --project glass-sintetico --only hosting:personal
+```

@@ -1,0 +1,9 @@
+# La etiqueta `bundle` cubre las pruebas que miran el artefacto de
+# `flutter build web --release` y no el codigo Dart. Necesitan que el bundle
+# este compilado.
+#
+# Para correr solo las unitarias sin compilar primero:
+#   flutter test --exclude-tags=bundle
+tags:
+  bundle:
+    description: Comprueban el bundle web compilado, no el codigo Dart.
