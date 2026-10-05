@@ -1,6 +1,6 @@
 {
   "firestore": {
-    "rules": "mobile/firestore.registro.rules",
+    "rules": "mobile/firestore.rules",
     "indexes": "mobile/firestore.indexes.json"
   },
   "database": {
