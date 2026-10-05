@@ -107,8 +107,11 @@ Antes de publicar el panel, la comprobacion es:
 ```
 flutter build web --release
 flutter test
-firebase deploy --project glass-sintetico --only hosting:personal
+node tools/guardar-bundle.mjs
+node tools/publicar-personal.mjs
 ```
+
+El comando de despliegue quedo cubierto por `tools/publicar-personal.mjs`, que exige la copia guardada del bundle antes de publicar. Equivale a `firebase deploy --project glass-sintetico --only hosting:personal --config firebase.personal.json`. La seccion "Despliegues separados" de `docs/ARQUITECTURA_SPARK.md` describe la estructura completa.
 
 ## Copia del bundle por version, fuera de Git: `tools/guardar-bundle.mjs`
 
@@ -145,6 +148,12 @@ La secuencia completa para una versión nueva:
 flutter build web --release
 flutter test
 node tools/guardar-bundle.mjs
-firebase deploy --project glass-sintetico --only hosting:personal
-git tag -a version-sana-1.2 -m "..."
+node tools/publicar-personal.mjs
+git tag -a version-sana-x.y -m "..."
+```
+
+La web pública se publica aparte y no requiere recompilar el panel:
+
+```
+node tools/publicar-publica.mjs
 ```

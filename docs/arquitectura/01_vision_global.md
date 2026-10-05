@@ -90,8 +90,8 @@ Carga la **API heredada `compat` de Firebase 10.14.1** por CDN gstatic
 | Firebase Authentication | correo/contraseña del personal + **anónimo** para la web | `mobile/firebase.json`, `mobile/lib/firebase_options.dart`, `web/public/firebase-config.js` |
 | Cloud Firestore | autoridad definitiva de reservas, agenda, configuración, personal | reglas en `mobile/firestore.rules`, índices en `mobile/firestore.indexes.json` |
 | Realtime Database | presencia en vivo (`presencia/…`) y réplica de ACL (`acceso/{negocio}/{uid}`) | `mobile/database.rules.json`, URL `https://glass-sintetico-default-rtdb.firebaseio.com` en `mobile/lib/firebase_options.dart` (web:25, android:33, ios:41) |
-| Firebase Hosting | dos sites: `publica` → `web/public`, `personal` → `mobile/build/web` | `firebase.json:9-96`, `.firebaserc` |
-| Firebase Emulators | auth 9099, firestore 8081, database 9000, hosting 5000 | `firebase.json:98-115` |
+| Firebase Hosting | dos sites separados: `publica` → `web/public`, `personal` → `mobile/build/web` | `firebase.publica.json`, `firebase.personal.json`, `.firebaserc` |
+| Firebase Emulators | auth 9099, firestore 8081, database 9000, hosting 5000 | `firebase.json` |
 | gcloud ADC | credenciales del operador para los scripts | fuera del repo (`gcloud auth application-default login`) |
 
 **No hay** pagos, pasarela (Culqi), WhatsApp, Cloudinary, correo saliente, ni webhooks.
@@ -234,7 +234,13 @@ propios dentro de la capa de datos. El detalle por módulo corresponde a la Fase
 
 ```
 canchas-cliente/
-├── firebase.json / .firebaserc      Config canónica: 2 hostings, 3 reglas, 4 emuladores
+├── firebase.json                     Config canónica: 3 reglas + emuladores, SIN hosting
+├── firebase.publica.json             Solo hosting:publica → web/public
+├── firebase.personal.json            Solo hosting:personal → mobile/build/web
+├── .firebaserc                       Targets de hosting (publica/personal)
+│                                    SIN hosting en firebase.json: un `firebase deploy`
+│                                    normal no publica ninguna web. Ver
+│                                    docs/ARQUITECTURA_SPARK.md "Despliegues separados".
 ├── .gitignore                        node_modules, *.log, .env*, .production-audit/, capturas PNG
 │
 ├── mobile/                           ── PANEL INTERNO (Flutter) ──

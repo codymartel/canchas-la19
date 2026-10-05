@@ -25,13 +25,32 @@ validacion de esta etapa detalla sus resultados y publicaciones.
 ## Configuracion canonica
 
 - El comando de Firebase debe ejecutarse desde la raiz `canchas-cliente/`.
-- `firebase.json` es la configuracion canonica de Hosting, Firestore y Realtime Database.
+- `firebase.json` es la configuracion canonica de Firestore, Realtime Database y emuladores. **No contiene `hosting`**: un `firebase deploy` normal no publica ninguna web.
 - Firestore carga `mobile/firestore.rules` y `mobile/firestore.indexes.json`.
 - Realtime Database carga `mobile/database.rules.json`.
 - El proyecto real es `glass-sintetico`. Las pruebas usan exclusivamente `demo-grass-local` con emuladores.
 - Puertos locales: Auth `9099`, Firestore `8081`, Realtime Database `9000`, Hosting `5000`.
 
 No ejecutar `firebase deploy` como parte de desarrollo o pruebas. El codigo actual no reemplaza por si solo ningun bundle publicado ni elimina una Function que ya estuviera desplegada.
+
+## Despliegues separados
+
+Cada web se publica con su propio archivo, que no menciona las reglas ni la otra web. Modificar o desplegar la web publica no obliga a recompilar el panel ni puede publicar las reglas de Realtime Database.
+
+| Archivo | Contenido | Site | Origen |
+| --- | --- | --- | --- |
+| `firebase.json` | Firestore, Realtime Database, emuladores. Sin `hosting`. | — | — |
+| `firebase.publica.json` | Solo `hosting:publica` | `glass-sintetico-tienda` | `web/public` |
+| `firebase.personal.json` | Solo `hosting:personal` | `glass-sintetico` | `mobile/build/web` |
+
+```
+node tools/publicar-publica.mjs     # web publica, sin recompilar nada
+node tools/publicar-personal.mjs    # panel, exige copia guardada del bundle
+```
+
+`publicar-personal.mjs` ejecuta `tools/guardar-bundle.mjs --verificar` antes de publicar y se detiene si `mobile/build/web` no coincide con una copia aprobada. Los dos scripts comprueban que su archivo de configuracion tenga unicamente `hosting` y que el target de `.firebaserc` apunte al site esperado, y fallan si no.
+
+La web publica no se compila: `web/public/` se publica tal cual, asi que un cambio en la web no pasa por `flutter build web` ni por `flutter clean`.
 
 ## Administrador inicial
 
