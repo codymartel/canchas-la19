@@ -25,11 +25,11 @@ validacion de esta etapa detalla sus resultados y publicaciones.
 ## Configuracion canonica
 
 - El comando de Firebase debe ejecutarse desde la raiz `canchas-cliente/`.
-- `firebase.json` es la configuracion canonica de Firestore, Realtime Database y emuladores. **No contiene `hosting`**: un `firebase deploy` normal no publica ninguna web.
+- `firebase.json` es la configuracion canonica de Firestore y Realtime Database. **No contiene `hosting`**: un `firebase deploy` normal no publica ninguna web.
 - Firestore carga `mobile/firestore.rules` y `mobile/firestore.indexes.json`.
 - Realtime Database carga `mobile/database.rules.json`.
-- El proyecto real es `glass-sintetico`. Las pruebas usan exclusivamente `demo-grass-local` con emuladores.
-- Puertos locales: Auth `9099`, Firestore `8081`, Realtime Database `9000`, Hosting `5000`.
+- El proyecto real es `glass-sintetico`. El desarrollo local y las pruebas usan exclusivamente `demo-grass-local` con emuladores.
+- El entorno local completo se levanta con `node tools/emuladores.mjs`, que usa `firebase.emuladores.json`.
 
 No ejecutar `firebase deploy` como parte de desarrollo o pruebas. El codigo actual no reemplaza por si solo ningun bundle publicado ni elimina una Function que ya estuviera desplegada.
 
@@ -37,11 +37,12 @@ No ejecutar `firebase deploy` como parte de desarrollo o pruebas. El codigo actu
 
 Cada web se publica con su propio archivo, que no menciona las reglas ni la otra web. Modificar o desplegar la web publica no obliga a recompilar el panel ni puede publicar las reglas de Realtime Database.
 
-| Archivo | Contenido | Site | Origen |
-| --- | --- | --- | --- |
-| `firebase.json` | Firestore, Realtime Database, emuladores. Sin `hosting`. | — | — |
-| `firebase.publica.json` | Solo `hosting:publica` | `glass-sintetico-tienda` | `web/public` |
-| `firebase.personal.json` | Solo `hosting:personal` | `glass-sintetico` | `mobile/build/web` |
+| Archivo | Uso | Contenido | Site | Origen |
+| --- | --- | --- | --- | --- |
+| `firebase.json` | reglas | Firestore y Realtime Database. Sin `hosting`. | — | — |
+| `firebase.publica.json` | produccion | Solo `hosting:publica` | `glass-sintetico-tienda` | `web/public` |
+| `firebase.personal.json` | produccion | Solo `hosting:personal` | `glass-sintetico` | `mobile/build/web` |
+| `firebase.emuladores.json` | **solo local** | Firestore, Realtime Database, `hosting` y los cuatro emuladores | `demo-grass-local-publica` | `web/public` |
 
 ```
 node tools/publicar-publica.mjs     # web publica, sin recompilar nada
@@ -51,6 +52,33 @@ node tools/publicar-personal.mjs    # panel, exige copia guardada del bundle
 `publicar-personal.mjs` ejecuta `tools/guardar-bundle.mjs --verificar` antes de publicar y se detiene si `mobile/build/web` no coincide con una copia aprobada. Los dos scripts comprueban que su archivo de configuracion tenga unicamente `hosting` y que el target de `.firebaserc` apunte al site esperado, y fallan si no.
 
 La web publica no se compila: `web/public/` se publica tal cual, asi que un cambio en la web no pasa por `flutter build web` ni por `flutter clean`.
+
+## Desarrollo local
+
+Un solo comando levanta el entorno completo:
+
+```
+node tools/emuladores.mjs
+```
+
+| Servicio | Puerto |
+| --- | --- |
+| Auth | `9099` |
+| Firestore | `8081` |
+| Realtime Database | `9000` |
+| Hosting, sirviendo `web/public` | `5000` |
+
+La web queda en `http://127.0.0.1:5000/?reservas=1`. El parametro es necesario: `web/public/firebase-config.js` solo habilita el formulario en local si la consulta lo pide, y ahi `web/public/app.js` engancha Auth y Firestore a los emuladores por ser `localhost`.
+
+El Hosting local usa `site: "demo-grass-local-publica"` en vez de un `target`, y por eso no depende de la resolucion de targets de `.firebaserc` ni de que el proyecto `demo-grass-local` exista en el servidor. Es un proyecto ficticio a proposito: ninguna peticion puede salir a produccion.
+
+El panel usa los mismos emuladores con `EMULATOR_HOST`, que ademas anade el 9000 de Realtime Database:
+
+```
+EMULATOR_HOST=127.0.0.1 flutter run -d chrome
+```
+
+`firebase.emuladores.json` es exclusivamente de desarrollo local: ningun script de publicacion lo menciona, y produccion sigue usando `firebase.publica.json` y `firebase.personal.json`.
 
 ## Administrador inicial
 

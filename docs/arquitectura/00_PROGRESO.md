@@ -17,9 +17,10 @@ canchas-cliente/
   .git/                            REPO GIT. Top-level = esta carpeta (ver sección 5)
   .firebaserc                      [259 B]   targets de hosting (publica/personal)
   .gitignore                       [137 B]
-  firebase.json                    raíz: reglas + emuladores, SIN hosting (Paso 3)
-  firebase.publica.json            raíz: solo hosting:publica → web/public (Paso 3)
-  firebase.personal.json           raíz: solo hosting:personal → mobile/build/web (Paso 3)
+  firebase.json                    raíz: reglas (Firestore, RTDB), SIN hosting (Paso 3)
+  firebase.publica.json            raíz: producción, solo hosting:publica → web/public (Paso 3)
+  firebase.personal.json           raíz: producción, solo hosting:personal → mobile/build/web (Paso 3)
+  firebase.emuladores.json         raíz: SOLO LOCAL, reglas + hosting de web/public + 4 emuladores (Paso 4)
   database-debug.log
   firestore-debug.log              [437 KB]  logs en raíz, IGNORADOS por .gitignore:2 (*.log)
 
@@ -329,9 +330,10 @@ Mensajes de commit **copiados textualmente** de `git log` (todos con cuerpo vac�
 | Archivo | Contenido clave |
 |---|---|
 | `mobile/pubspec.yaml` | Flutter, SDK `^3.12.2`; deps: `firebase_core ^3.6.0`, `firebase_auth ^5.3.1`, `cloud_firestore ^5.4.3`, `firebase_database ^11.1.4`. Dev: `flutter_test`, `fake_cloud_firestore ^3.1.0`, `mocktail ^1.0.4`, `http`, `integration_test`, `flutter_lints ^6.0.0`. **Sin `provider`, sin `go_router`, sin `build_runner`, sin `freezed`, sin `riverpod`, sin `bloc`.** |
-| `firebase.json` (raíz) | Reglas desde `mobile/firestore.rules` + `mobile/firestore.indexes.json`; `database` desde `mobile/database.rules.json`. **Sin `hosting`** desde el Paso 3. Emuladores: auth 9099, firestore 8081, database 9000, hosting 5000. `singleProjectMode: false`. |
-| `firebase.publica.json` | Solo `hosting:publica` → `web/public`, headers de no-cache. Sin reglas ni panel. |
-| `firebase.personal.json` | Solo `hosting:personal` → `mobile/build/web`, headers de no-cache. Sin reglas ni web pública. |
+| `firebase.json` (raíz) | Reglas desde `mobile/firestore.rules` + `mobile/firestore.indexes.json`; `database` desde `mobile/database.rules.json`. **Sin `hosting`** desde el Paso 3, y sin `emulators.hosting` desde el Paso 4. Emuladores que conserva: auth 9099, firestore 8081, database 9000. `singleProjectMode: false`. |
+| `firebase.publica.json` | Producción. Solo `hosting:publica` → `web/public`, headers de no-cache. Sin reglas ni panel. |
+| `firebase.personal.json` | Producción. Solo `hosting:personal` → `mobile/build/web`, headers de no-cache. Sin reglas ni web pública. |
+| `firebase.emuladores.json` | **Solo desarrollo local.** Reglas + `hosting` de `web/public` con `site: "demo-grass-local-publica"` (no depende de target de `.firebaserc`) + emuladores auth 9099, firestore 8081, database 9000, hosting 5000. Se levanta con `node tools/emuladores.mjs`. Ningún script de publicación lo usa. |
 | `.firebaserc` | default `glass-sintetico`; hosting `publica` → `glass-sintetico-tienda`, `personal` → `glass-sintetico`. También declara `demo-grass-local` con sus dos targets. |
 | `mobile/firebase.json` | Config de `flutterfire`; projectId `glass-sintetico`; appIds android, ios y web. |
 | `mobile/lib/firebase_options.dart` | `DefaultFirebaseOptions.currentPlatform` con opciones web/android/ios. **En `TargetPlatform.windows` devuelve `web`** (línea 11); en linux/macos lanza `UnsupportedError`. |

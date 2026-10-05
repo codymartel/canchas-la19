@@ -90,8 +90,8 @@ Carga la **API heredada `compat` de Firebase 10.14.1** por CDN gstatic
 | Firebase Authentication | correo/contraseña del personal + **anónimo** para la web | `mobile/firebase.json`, `mobile/lib/firebase_options.dart`, `web/public/firebase-config.js` |
 | Cloud Firestore | autoridad definitiva de reservas, agenda, configuración, personal | reglas en `mobile/firestore.rules`, índices en `mobile/firestore.indexes.json` |
 | Realtime Database | presencia en vivo (`presencia/…`) y réplica de ACL (`acceso/{negocio}/{uid}`) | `mobile/database.rules.json`, URL `https://glass-sintetico-default-rtdb.firebaseio.com` en `mobile/lib/firebase_options.dart` (web:25, android:33, ios:41) |
-| Firebase Hosting | dos sites separados: `publica` → `web/public`, `personal` → `mobile/build/web` | `firebase.publica.json`, `firebase.personal.json`, `.firebaserc` |
-| Firebase Emulators | auth 9099, firestore 8081, database 9000, hosting 5000 | `firebase.json` |
+| Firebase Hosting | dos sites de producción separados: `publica` → `web/public`, `personal` → `mobile/build/web` | `firebase.publica.json`, `firebase.personal.json`, `.firebaserc` |
+| Firebase Emulators | auth 9099, firestore 8081, database 9000, hosting 5000 sirviendo `web/public`; solo local | `firebase.emuladores.json`, levantado con `node tools/emuladores.mjs` |
 | gcloud ADC | credenciales del operador para los scripts | fuera del repo (`gcloud auth application-default login`) |
 
 **No hay** pagos, pasarela (Culqi), WhatsApp, Cloudinary, correo saliente, ni webhooks.
@@ -234,13 +234,16 @@ propios dentro de la capa de datos. El detalle por módulo corresponde a la Fase
 
 ```
 canchas-cliente/
-├── firebase.json                     Config canónica: 3 reglas + emuladores, SIN hosting
-├── firebase.publica.json             Solo hosting:publica → web/public
-├── firebase.personal.json            Solo hosting:personal → mobile/build/web
+├── firebase.json                     Config canónica de reglas (Firestore, RTDB), SIN hosting
+├── firebase.publica.json             Produccion: solo hosting:publica → web/public
+├── firebase.personal.json            Produccion: solo hosting:personal → mobile/build/web
+├── firebase.emuladores.json          Solo local: reglas + hosting de web/public + 4 emuladores
 ├── .firebaserc                       Targets de hosting (publica/personal)
-│                                    SIN hosting en firebase.json: un `firebase deploy`
-│                                    normal no publica ninguna web. Ver
-│                                    docs/ARQUITECTURA_SPARK.md "Despliegues separados".
+│                                    SIN hosting en firebase.json: un `firebase deploy` normal
+│                                    no publica ninguna web. Desarrollo local con
+│                                    `node tools/emuladores.mjs`. Ver
+│                                    docs/ARQUITECTURA_SPARK.md "Despliegues separados" y
+│                                    "Desarrollo local".
 ├── .gitignore                        node_modules, *.log, .env*, .production-audit/, capturas PNG
 │
 ├── mobile/                           ── PANEL INTERNO (Flutter) ──
@@ -304,7 +307,7 @@ Documento de 229 líneas. Contrastado afirmación por afirmación contra el cód
 | 4 | RTDB carga `mobile/database.rules.json` | `firebase.json:6-8` |
 | 5 | El proyecto real es `glass-sintetico` | `.firebaserc`, `mobile/firebase.json:6`, `firebase_options.dart:5` |
 | 6 | Las pruebas usan `demo-grass-local` con emuladores | `main.dart:37,44-48`, `firebase-config.js:11`, `.firebaserc` declara el proyecto demo |
-| 7 | Puertos 9099 / 8081 / 9000 / 5000 | `firebase.json:98-115`, `main.dart:71-74`, `web/public/app.js:14-15` |
+| 7 | Puertos 9099 / 8081 / 9000 / 5000 | `firebase.emuladores.json` (bloque `emulators`), `main.dart:71-74`, `web/public/app.js:14-15` |
 | 8 | La autoridad es el UID en `sistema/grass.administradorUid` | `core/domain/negocio.dart:4` (`documentoConfiguracion='sistema/grass'`), `:219` `administradorUid`; `acceso_repository.dart:38,54` |
 | 9 | Un UID sin ficha de empleado queda en "cuenta no vinculada" | `acceso_repository.dart:38-54`, `main.dart:177-181` `EstadoSesion.noVinculado` → `NoVinculadoScreen` |
 | 10 | La URL de RTDB está en todas las plataformas de `firebase_options.dart` | `firebase_options.dart:25` (web), `:33` (android), `:41` (ios) |
