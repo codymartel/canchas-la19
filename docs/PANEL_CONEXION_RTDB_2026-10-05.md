@@ -109,3 +109,42 @@ flutter build web --release
 flutter test
 firebase deploy --project glass-sintetico --only hosting:personal
 ```
+
+## Copia del bundle por version, fuera de Git: `tools/guardar-bundle.mjs`
+
+El bundle no cabe en Git y `flutter clean` borra `mobile/build/`, así que un artefacto roto se vuelve irrecuperable: habría que recompilar y confiar. El script guarda una copia por versión en `bundles/`, carpeta ignorada por `.gitignore` siguiendo el precedente de `.production-audit/`.
+
+```
+node tools/guardar-bundle.mjs              guarda mobile/build/web
+node tools/guardar-bundle.mjs --verificar  compara lo guardado con lo actual
+node tools/guardar-bundle.mjs --forzar     reemplaza la copia existente
+```
+
+Cada copia va en `bundles/<commit>/` e incluye un `MANIFIESTO.json` con el commit completo, la etiqueta si el HEAD está etiquetado, la fecha, el tamaño y el SHA-256 de cada archivo, más un `resumen` que es el SHA-256 de la lista de hashes: cambia si cambia un solo byte de cualquier archivo.
+
+El destino lo decide el commit, así que guardar dos veces el mismo commit no pisa nada sin `--forzar`.
+
+El script repite el discriminante `.firebase_database` antes de copiar. Comprobado: con el bundle roto se niega a guardar con exit 1, de modo que no depende de que alguien recuerde correr `flutter test` antes.
+
+La primera copia, `bundles/a8c5973` de la etiqueta `version-sana-1.1`:
+
+| | |
+| --- | --- |
+| Archivos | 38 |
+| Peso | 40,97 MB, de los cuales 36,69 MB son `canvaskit/` |
+| `main.dart.js` | 3.026.383 bytes, `211c4069e7b840a0b7de3bbfcf134ffadbd9b2512375d002745d1d404e4c1a46` |
+| `resumen` | `7d219f66fdbcd7c765e9500d8ebe33f9a363aa1effdfb80f9bc03c1b88b9c3f3` |
+
+Son casi 41 MB por versión porque se guarda completo, incluido `canvaskit/`. Guardarlo sin ese directorio reduciría a 4 MB, pero la copia dejaría de ser desplegable, así que se conserva entero.
+
+Como segunda red existe la retención de versiones de Firebase Hosting, que ya conserva cada publicación y se puede recuperar con `firebase hosting:clone`. No se ha aprovechado porque el CLI no expone el identificador de versión y habría que leerlo en la consola a mano.
+
+La secuencia completa para una versión nueva:
+
+```
+flutter build web --release
+flutter test
+node tools/guardar-bundle.mjs
+firebase deploy --project glass-sintetico --only hosting:personal
+git tag -a version-sana-1.2 -m "..."
+```

@@ -7,3 +7,8 @@ node_modules/
 mobile/test/features/empleados/capturas/*.png
 
 .production-audit/
+
+# Copias de bundles web aprobadas, por version. Fuera de Git a proposito:
+# mobile/build/ lo borra flutter clean, y aqui no cabe un artefacto de 41 MB.
+# Se crean con: node tools/guardar-bundle.mjs
+bundles/
